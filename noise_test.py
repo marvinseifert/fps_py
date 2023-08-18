@@ -7,7 +7,7 @@ pygame.init()
 
 # Set the dimensions of the window
 width, height = 800, 600
-checker_size = 50
+checker_size = 5
 
 # Create a window
 window = pygame.display.set_mode((width, height))
@@ -19,9 +19,10 @@ pygame.display.set_caption("Checkerboard Stimuli Display")
 #ser = serial.Serial('COM3', 9600)
 
 def send_trigger():
+    return
     # Send a trigger signal via the serial port
     #ser.write(b'T')
-    print("Trigger sent")
+    #print("Trigger sent")
 
 def draw_checkerboard():
     for x in range(0, width, checker_size):
@@ -30,11 +31,15 @@ def draw_checkerboard():
             pygame.draw.rect(window, color, (x, y, checker_size, checker_size))
 
 frame_count = 0
+
+# Create a Clock object to regulate frame rate
+clock = pygame.time.Clock()
+
 while True:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             pygame.quit()
-            ser.close()
+            #ser.close()
             exit()
 
     # If it's time to update the checkerboard pattern (every 3 frames)
@@ -44,3 +49,8 @@ while True:
         pygame.display.flip()
 
     frame_count += 1
+
+    # Regulate frame rate to 60 Hz and check for drops
+    time_elapsed = clock.tick(60.0)
+    if time_elapsed > 1000/60:  # Convert frame rate to milliseconds
+        print(f"WARNING: Frame rate dropped below 60 Hz!, was {1000/time_elapsed}")
