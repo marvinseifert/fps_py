@@ -4,6 +4,7 @@ from moderngl_window.conf import settings
 import numpy as np
 import time
 import pyglet
+import h5py
 
 # Get the current display
 display = pyglet.canvas.get_display()
@@ -11,9 +12,10 @@ display = pyglet.canvas.get_display()
 # Get the list of screens
 screens = display.get_screens()
 
-checkerboard_size = 100
-freq = 30
-frames = 5*60*freq
+checkerboard_size = 1
+freq = 5
+frames = int(0.5*60*freq)
+
 # Configure the window settings
 settings.WINDOW['class'] = 'moderngl_window.context.pyglet.Window'
 settings.WINDOW['gl_version'] = (4, 1)
@@ -93,57 +95,79 @@ def generate_checkerboard_pattern(checker_size, width_in_pixels, height_in_pixel
 
     return pattern_texture
 
-# Create textures for patterns
-patterns = [ctx.texture((width_in_pixels, height_in_pixels), 1, pattern.tobytes()) for pattern in
-            [generate_checkerboard_pattern(checkerboard_size, width_in_pixels, height_in_pixels) for _ in range(frames)]]
 
 
 
+# # Create textures for patterns
+# patterns = [ctx.texture((width_in_pixels, height_in_pixels), 1, pattern.tobytes()) for pattern in
+#             [generate_checkerboard_pattern(checkerboard_size, width_in_pixels, height_in_pixels) for _ in range(frames)]]
 
-current_pattern_index = 0
+def load_3d_patterns():
+    with h5py.File('Noise.h5', 'r') as f:
+        noise = f['Red_Noise'][:]
+    return noise
+
+# Load all patterns into memory
+all_patterns_3d = load_3d_patterns()
+
+patterns = [
+    ctx.texture((width_in_pixels, height_in_pixels), 1, all_patterns_3d[i].tobytes())
+    for i in range(frames)
+]
+
+
 
 desired_fps = freq  # Set frame rate to 20 Hz
 time_per_frame = 1.0 / desired_fps
 last_update = time.time()
-current_pattern_index = 0
 
 while not window.is_closing:
+    for current_pattern_index in range(len(patterns)):
 
 
-    window.use()  # Ensure the correct context is being used
-    start_time = time.time()  # Start time for this frame
-    elapsed_time = start_time - last_update
+        window.use()  # Ensure the correct context is being used
+        start_time = time.time()  # Start time for this frame
+        elapsed_time = start_time - last_update
 
-    if elapsed_time >= time_per_frame:
-        # Clear the window
-        ctx.clear(1.0, 1.0, 1.0)
+        if elapsed_time >= time_per_frame:
+            # Clear the window
+            ctx.clear(1.0, 1.0, 1.0)
 
-        # Bind the texture to texture unit 0
-        patterns[current_pattern_index].use(location=0)
+            # Bind the texture to texture unit 0
+            patterns[current_pattern_index].use(location=0)
 
-        # Set the shader uniform to the index of the texture unit
-        program['aspect_adjustment'].value = aspect_adjustment
+            # Set the shader uniform to the index of the texture unit
+            program['aspect_adjustment'].value = aspect_adjustment
 
-        program['pattern'].value = 0
+            program['pattern'].value = 0
 
-        # Render the full screen quad
-        vao.render(moderngl.TRIANGLES)
+            # Render the full screen quad
+            vao.render(moderngl.TRIANGLES)
 
-        # Swap buffers after rendering
-        window.swap_buffers()
+            # Swap buffers after rendering
+            window.swap_buffers()
 
-        # Measure frame duration
-        frame_duration = time.time() - start_time
-        if frame_duration > time_per_frame:
-            print(
-                f"WARNING: Frame duration of {frame_duration * 1000:.2f} ms exceeds the desired {time_per_frame * 1000:.2f} ms!")
+            # Measure frame duration
+            frame_duration = time.time() - start_time
+            if frame_duration > time_per_frame:
+                print(
+                    f"WARNING: Frame duration of {frame_duration * 1000:.2f} ms exceeds the desired {time_per_frame * 1000:.2f} ms!")
 
-        # Move to the next pattern
-        current_pattern_index = (current_pattern_index + 1) % len(patterns)
 
-        # Update the last update time
-        last_update = start_time
-    else:
-        # Sleep for a short duration to avoid busy waiting
-        time.sleep(0.001)  # Sleep for 1 millisecond
+            # Update the last update time
+            last_update = start_time
+            if current_pattern_index == len(patterns) - 1:
+                window.close()
+        else:
+            # Sleep for a short duration to avoid busy waiting
+            time.sleep(0.001)  # Sleep for 1 millisecond
 
+
+
+
+
+
+
+
+
+window.close()
