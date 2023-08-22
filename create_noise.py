@@ -4,7 +4,7 @@ import h5py
 duration_m = 0.5
 freq = 5
 canvas_size = (1000, 1000)
-checkerboard_size = 1
+checkerboard_size = 4
 frames = int(duration_m*60*freq)
 
 noise_shape = (np.ceil(canvas_size[0]/checkerboard_size).astype(int),
@@ -30,15 +30,15 @@ def generate_checkerboard_pattern(checker_size, width_in_pixels, height_in_pixel
 
 
 # %%
-def generate_and_store_3d_array(frames, checkerboard_size, width_in_pixels, height_in_pixels):
+def generate_and_store_3d_array(frames, checkerboard_size, width_in_pixels, height_in_pixels, fps,name="Noise.h5"):
     patterns_list = [generate_checkerboard_pattern(checkerboard_size, width_in_pixels, height_in_pixels) for _ in
                      range(frames)]
     stacked_patterns = np.stack(patterns_list, axis=0)  # This creates a 3D array
-    with h5py.File('Noise.h5', 'w') as f:
-        f.create_dataset('Red_Noise', data=stacked_patterns, dtype="uint8")
+    with h5py.File(name, 'w') as f:
+        f.create_dataset('Noise', data=stacked_patterns, dtype="uint8")
+        f.create_dataset(name="Frame_Rate", data=fps, dtype="uint8")
+        f.create_dataset(name="Checkerboard_Size", data=checkerboard_size, dtype="uint64")
+        f.create_dataset(name="Shuffle", data=False, dtype="bool")
 
 
 
-
-# Call this function once to generate and save the 3D array
-generate_and_store_3d_array(frames, checkerboard_size, canvas_size[0], canvas_size[1])
