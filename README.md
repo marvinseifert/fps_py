@@ -4,4 +4,4 @@ The noise is created using moderngl and shaders, which allows for fast generatio
 It is possible to display 2 million checkers at 30 fps. 
 
 
-![Noise](noise.png)
+![Noise](noise.PNG)
