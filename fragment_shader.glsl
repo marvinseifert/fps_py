@@ -6,7 +6,6 @@ in vec2 uv;
 //uniform float aspect_adjustment;
 uniform vec2 scale;
 void main() {
-    // Adjust the UV coordinates
 
     float value = texture(pattern, uv).r;
 
