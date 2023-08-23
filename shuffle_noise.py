@@ -4,7 +4,19 @@ from create_noise import generate_checkerboard_pattern
 
 
 def shuffle_pattern(pattern, checker_size):
-    """Shuffle the pattern by a random number of pixels relative to checkerboard size in x and y directions."""
+    """Shuffle the pattern by a random number of pixels relative to checkerboard size in x and y directions.
+    Parameters
+    ----------
+    pattern : numpy.ndarray
+        The pattern to shuffle.
+    checker_size : int
+        The size of the checkerboard squares in pixels.
+    Returns
+    -------
+    numpy.ndarray
+        The shuffled pattern.
+
+    """
     max_shift = checker_size // 2  # Calculate maximum shift relative to checker size
     shifts = np.arange(0, max_shift + 1, checker_size // 4)  # Get the possible shifts
 
@@ -20,6 +32,23 @@ def shuffle_pattern(pattern, checker_size):
 
 
 def generate_and_store_3d_array(frames, checkerboard_size, width_in_pixels, height_in_pixels, fps, name="Noise.h5"):
+    """Generate a 3D array of checkerboard patterns and store it in an HDF5 file.
+    Parameters
+    ----------
+    frames : int
+        The number of frames to generate.
+    checkerboard_size : int
+        The size of the checkerboard squares in pixels.
+    width_in_pixels : int
+        The width of the pattern in pixels.
+    height_in_pixels : int
+        The height of the pattern in pixels.
+    fps : int
+        The frame rate of the pattern in Hz.
+    name : str
+        The name of the HDF5 file to store the pattern in.
+    """
+
     patterns_list = []
 
     # Generate the checkerboard patterns with random shuffling for each frame
