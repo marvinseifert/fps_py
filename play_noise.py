@@ -5,6 +5,21 @@ import time
 import h5py
 import numpy as np
 from pathlib import Path
+import serial
+
+
+def connect_to_arduino(port='COM3', baud_rate=9600):
+    """Establish a connection to the Arduino."""
+    try:
+        arduino = serial.Serial(port, baud_rate)
+        return arduino
+    except Exception as e:
+        print(f"Error connecting to Arduino: {e}")
+        return None
+
+
+
+
 
 class Presenter:
     """
@@ -47,6 +62,8 @@ class Presenter:
         settings.WINDOW['aspect_ratio'] = None #Sets the aspect ratio to the window's aspect ratio
         settings.WINDOW["fullscreen"] = config_dict["fullscreen"]
         settings.WINDOW["samples"] = 0
+        settings.WINDOW["double_buffer"] = True
+        settings.WINDOW["vsync"] = True
 
 
         self.window = moderngl_window.create_window_from_settings()
@@ -54,6 +71,11 @@ class Presenter:
         self.window.init_mgl_context() # Initialize the moderngl context
         self.stop = False # Flag for stopping the presentation
         self.window.set_default_viewport() # Set the viewport to the window size
+        self.arduino = connect_to_arduino() # Establish a connection to the Arduino
+
+    def __del__(self):
+        if self.arduino:
+            self.arduino.close()
 
     def run_empty(self):
         """
@@ -82,6 +104,15 @@ class Presenter:
                 self.run_empty() # Run the empty loop
             elif command == "destroy":
                 self.window.close() # Close the window
+
+    def send_trigger(self):
+        """Send a trigger signal to the Arduino."""
+        if self.arduino:
+            try:
+                self.arduino.write(b'T')  # Sending a 'T' as the trigger. Modify as needed.
+            except Exception as e:
+                print(f"Error sending trigger to Arduino: {e}")
+
     def play_noise(self, file):
         """
         Play the noise file. This function loads the noise file, creates a texture from it and presents it.
@@ -148,6 +179,8 @@ class Presenter:
             elapsed_time = start_time - last_update
 
             if elapsed_time >= time_per_frame: # Wait for correct time to present the next frame
+
+
                 # Clear the window
                 self.window.ctx.clear(0.5, 0.5, 0.5)
 
@@ -161,7 +194,9 @@ class Presenter:
                 vao.render(moderngl.TRIANGLES)
 
                 # Swap buffers after rendering
+
                 self.window.swap_buffers()
+                self.send_trigger()  # Send a trigger signal to the Arduino
 
                 # Measure frame duration
                 frame_duration = time.time() - start_time
