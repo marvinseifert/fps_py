@@ -45,7 +45,9 @@ class NoiseGeneratorApp:
         self.selected_file_info_var = tk.StringVar(value="") # variable for selected file info
         self.shuffle = tk.IntVar() # variable for shuffle checkbox
         self.style = ttk.Style() # style for ttk widgets
-
+        self.loop = tk.StringVar(value="") # variable for loop checkbox
+        self.colours = tk.StringVar(value="") # variable for colours checkbox
+        self.colour_change = tk.StringVar(value="") # variable for colour change checkbox
 
         self._initialize_ui() # initialize the UI
 
@@ -86,13 +88,47 @@ class NoiseGeneratorApp:
 
         # Scrollbar for right frame
         self.scrollbar = ttk.Scrollbar(self.right_frame, orient="vertical")
-        self.scrollbar.grid(row=2, column=1, sticky='ns', padx=0)
+        self.scrollbar.grid(row=3, column=1, sticky='ns', padx=0)
 
         # File listbox
         self.file_listbox = tk.Listbox(self.right_frame, height=25, width=30, selectmode=tk.SINGLE,
                                        yscrollcommand=self.scrollbar.set)
-        self.file_listbox.grid(row=2, column=0, columnspan=1, pady=5, sticky=tk.N + tk.S + tk.E + tk.W)
+        self.file_listbox.grid(row=4, column=0, columnspan=1, pady=5, sticky=tk.N + tk.S + tk.E + tk.W)
         self.scrollbar.config(command=self.file_listbox.yview)
+
+        # Loop Frame
+        loop_frame = ttk.Frame(self.right_frame)
+        loop_frame.grid(row=1, column=0, columnspan=2, pady=5, sticky=tk.W)
+        # Loop label
+        self.loop_label = ttk.Label(loop_frame, text="Loops", width=7)
+        self.loop_label.pack(side=tk.LEFT, padx=2)
+        # Loop entry
+        self.loop_entry = ttk.Entry(loop_frame, textvariable=self.loop, width=5)
+        self.loop_entry.pack(side=tk.LEFT, padx=5)
+        self.loop_entry.insert(0, "1")
+
+        # Colour Frame
+        self.colour_label = ttk.Label(loop_frame, text="colour_logic", width=12)
+        self.colour_label.pack(side=tk.LEFT, padx=2)
+
+        # Colour Frame
+        self.colour_entry = ttk.Entry(loop_frame, textvariable=self.colours, width=10)
+        self.colour_entry.pack(side=tk.LEFT, padx=5)
+        self.colour_entry.insert(0, "R,G,B,U")
+
+        colour_frame = ttk.Frame(self.right_frame)
+        colour_frame.grid(row=2, column=0, columnspan=2, pady=5, sticky=tk.W)
+
+        self.colour_change_label = ttk.Label(colour_frame, text="change_every:", width=13)
+        self.colour_change_label.pack(side=tk.LEFT, padx=2)
+
+        self.colour_change = ttk.Entry(colour_frame, textvariable=self.colour_change, width=10)
+        self.colour_change.pack(side=tk.LEFT, padx=5)
+        self.colour_change.insert(0, "100")
+
+        self.colour_change_frames = ttk.Label(colour_frame, text="Frames.", width=12)
+        self.colour_change_frames.pack(side=tk.LEFT, padx=2)
+
 
         # Button frame for right frame
         button_frame = ttk.Frame(self.right_frame)
@@ -109,7 +145,7 @@ class NoiseGeneratorApp:
 
         # Selected file info label
         self.selected_file_info_label = ttk.Label(self.right_frame, textvariable=self.selected_file_info_var, width=40)
-        self.selected_file_info_label.grid(row=1, column=0, pady=5, sticky=tk.E)
+        self.selected_file_info_label.grid(row=3, column=0, pady=5, sticky=tk.E)
 
         # 3. Function calls
         self.refresh_file_list()
@@ -164,7 +200,10 @@ class NoiseGeneratorApp:
         # Check selected file in the file_listbox
         index = self.file_listbox.curselection()
         noise_name  = self.file_listbox.get(index[0])
-        self.queue.put(noise_name) # Put the noise name in the queue for the pyglet thread to read
+        queue_data = {"file": noise_name, "loops": int(self.loop_entry.get()), "colours": self.colours.get(),
+                      "change_logic": int(self.colour_change.get())}
+
+        self.queue.put(queue_data) # Put the noise name in the queue for the pyglet thread to read
 
     def on_stop_noise(self):
         """Stop the noise playback."""

@@ -6,6 +6,8 @@ import h5py
 import numpy as np
 from pathlib import Path
 import serial
+import csv
+import datetime
 
 
 def connect_to_arduino(port='COM3', baud_rate=9600):
@@ -97,10 +99,11 @@ class Presenter:
         """
         if not self.queue.empty():
             command = self.queue.get()
-            if Path(command).suffix == ".h5": # If the command is a path to a noise file, play the noise
+            if type(command) == dict:
                 self.play_noise(command)
             elif command == "stop": # If the command is "stop", stop the presentation
                 self.stop = False  # Trigger the stop flag for next time
+                self.send_colour("O")
                 self.run_empty() # Run the empty loop
             elif command == "destroy":
                 self.window.close() # Close the window
@@ -113,7 +116,15 @@ class Presenter:
             except Exception as e:
                 print(f"Error sending trigger to Arduino: {e}")
 
-    def play_noise(self, file):
+    def send_colour(self, colour):
+        if self.arduino:
+            try:
+                txt = f"{colour}".encode()  # Convert the colour string to bytes
+                self.arduino.write(txt)
+            except Exception as e:
+                print(f"Error sending trigger to Arduino: {e}")
+
+    def play_noise(self, noise_dict):
         """
         Play the noise file. This function loads the noise file, creates a texture from it and presents it.
         Parameters
@@ -122,7 +133,18 @@ class Presenter:
             Path to the noise file.
 
         """
+        file = noise_dict["file"]
+        loops = noise_dict["loops"]
+        colours = noise_dict["colours"]
+        change_logic = noise_dict["change_logic"]
+
+        colours = colours.split(",")
+        #colours = [x for x in colours for _ in range(change_logic)]
+
         all_patterns_3d, width, height, frames, desired_fps  = load_3d_patterns(file) # Load the noise data
+
+        colour_repeats = int(np.ceil(frames/change_logic/len(colours)))
+        colours = colours*colour_repeats
 
         # Establish the texture for each noise frame
         patterns = [
@@ -166,55 +188,96 @@ class Presenter:
         # Establish the time per frame for the desired fps
         time_per_frame = 1.0 / desired_fps
         last_update = time.time()
-        current_pattern_index = 0
-
 
         # Main loop for presenting the noise
         while not self.window.is_closing:
-            # Check for commands from the main process (gui) (for example stop commands)
-            self.communicate()
 
-            self.window.use()  # Ensure the correct context is being used
-            start_time = time.time()  # Start time for this frame
-            elapsed_time = start_time - last_update
+            for loop in range(loops):
 
-            if elapsed_time >= time_per_frame: # Wait for correct time to present the next frame
+                # Check for commands from the main process (gui) (for example stop commands)
+                current_pattern_index = 0
+                c_index = 0
+                c = colours[c_index]
+
+                while current_pattern_index <= frames:
 
 
-                # Clear the window
-                self.window.ctx.clear(0.5, 0.5, 0.5)
+                    self.communicate()
 
-                # Bind the texture to texture unit 0
-                patterns[current_pattern_index].use(location=0)
+                    self.window.use()  # Ensure the correct context is being used
+                    start_time = time.time()  # Start time for this frame
+                    elapsed_time = start_time - last_update
 
-                # Set the shader uniform to the index of the texture unit
-                program['pattern'].value = 0
+                    if elapsed_time >= time_per_frame: # Wait for correct time to present the next frame
 
-                # Render the full screen quad
-                vao.render(moderngl.TRIANGLES)
+                        if current_pattern_index % change_logic == 0:
+                            if current_pattern_index != 0:
+                                c_index += 1
+                                c = colours[c_index]
 
-                # Swap buffers after rendering
 
-                self.window.swap_buffers()
-                self.send_trigger()  # Send a trigger signal to the Arduino
+                        self.send_colour(c)
 
-                # Measure frame duration
-                frame_duration = time.time() - start_time
-                if frame_duration > time_per_frame:
-                    # If the frame duration exceeds the desired frame duration, print a warning
-                    print(
-                        f"WARNING: Frame duration of {frame_duration * 1000:.2f} ms exceeds the desired {time_per_frame * 1000:.2f} ms!")
+                        # Clear the window
+                        self.window.ctx.clear(0.5, 0.5, 0.5)
 
-                # Update the last update time
-                last_update = start_time
-                current_pattern_index += 1
-                # If the last frame was presented, stop the presentation
-                if current_pattern_index == len(patterns) - 1:
-                    self.run_empty()
-            else:
-                # Sleep for a short duration to avoid busy waiting
-                time.sleep(0.001)  # Sleep for 1 millisecond
+                        # Bind the texture to texture unit 0
+                        patterns[current_pattern_index].use(location=0)
 
+                        # Set the shader uniform to the index of the texture unit
+                        program['pattern'].value = 0
+
+                        # Render the full screen quad
+                        vao.render(moderngl.TRIANGLES)
+
+                        # Swap buffers after rendering
+
+                        self.window.swap_buffers()
+                        self.send_trigger()  # Send a trigger signal to the Arduino
+
+                        # Measure frame duration
+                        frame_duration = time.time() - start_time
+                        if frame_duration > time_per_frame:
+                            # If the frame duration exceeds the desired frame duration, print a warning
+                            print(
+                                f"WARNING: Frame duration of {frame_duration * 1000:.2f} ms exceeds the desired {time_per_frame * 1000:.2f} ms!")
+
+                        # Update the last update time
+                        last_update = start_time
+                        current_pattern_index += 1
+                        # If the last frame was presented, stop the presentation
+                        if current_pattern_index > len(patterns) - 1:
+                            #self.run_empty()
+                            break
+                    else:
+                        # Sleep for a short duration to avoid busy waiting
+                        time.sleep(0.001)  # Sleep for 1 millisecond
+            self.send_colour("O")
+            for pattern in patterns:
+                pattern.release()
+            vbo.release()
+            vao.release()
+            write_log(noise_dict)
+            self.run_empty()
+
+def write_log(noise_dict):
+    """
+    Write the log file for the noise presentation.
+    Parameters
+    ----------
+    noise_dict : str
+        Path to the noise file.
+    """
+    file = noise_dict["file"]
+    loops = noise_dict["loops"]
+    colours = noise_dict["colours"]
+    change_logic = noise_dict["change_logic"]
+    filename_format = f"logs/{file}_{datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S.csv')}"
+
+    with open(filename_format, "a", newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(["noise_file", "loops", "colours", "change_logic", "time"])
+        writer.writerow([file, loops, colours, change_logic, time.strftime('%H:%M:%S')])
 
 
 def load_3d_patterns(file):
