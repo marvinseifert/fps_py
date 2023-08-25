@@ -261,28 +261,30 @@ class NoiseGeneratorApp:
 
     def compute_size(self, *args):
         """Compute the estimated size of the noise file and update the label text."""
+        try:
+            noise_frequency = int(self.noise_frequency_var.get())
+            noise_duration = float(self.noise_duration_var.get())
+            frames = int(noise_duration * 60 * noise_frequency)
+            width, height = map(int, self.window_size_var.get().split(","))
 
-        noise_frequency = int(self.noise_frequency_var.get())
-        noise_duration = float(self.noise_duration_var.get())
-        frames = int(noise_duration * 60 * noise_frequency)
-        width, height = map(int, self.window_size_var.get().split(","))
+            size_in_bytes = frames * width * height  # uint8: 1 byte per element
 
-        size_in_bytes = frames * width * height  # uint8: 1 byte per element
+            # Do some unit conversions to make the size more readable:
+            if size_in_bytes < 1024:
+                size_str = f"{size_in_bytes} bytes"
+            elif size_in_bytes < 1024 ** 2:
+                size_in_kb = size_in_bytes / 1024
+                size_str = f"{size_in_kb:.2f} KB"
+            elif size_in_bytes < 1024 ** 3:
+                size_in_mb = size_in_bytes / (1024 ** 2)
+                size_str = f"{size_in_mb:.2f} MB"
+            else:
+                size_in_gb = size_in_bytes / (1024 ** 3)
+                size_str = f"{size_in_gb:.2f} GB"
 
-        # Do some unit conversions to make the size more readable:
-        if size_in_bytes < 1024:
-            size_str = f"{size_in_bytes} bytes"
-        elif size_in_bytes < 1024 ** 2:
-            size_in_kb = size_in_bytes / 1024
-            size_str = f"{size_in_kb:.2f} KB"
-        elif size_in_bytes < 1024 ** 3:
-            size_in_mb = size_in_bytes / (1024 ** 2)
-            size_str = f"{size_in_mb:.2f} MB"
-        else:
-            size_in_gb = size_in_bytes / (1024 ** 3)
-            size_str = f"{size_in_gb:.2f} GB"
-
-        self.size_label.config(text=f"Estimated size: {size_str}") # Update the label text
+            self.size_label.config(text=f"Estimated size: {size_str}") # Update the label text
+        except ValueError:
+            pass
 
     def on_close(self):
         """Called when the window is closed."""
