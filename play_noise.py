@@ -77,6 +77,7 @@ class Presenter:
 
     def __del__(self):
         if self.arduino:
+            self.send_colour("O")
             self.arduino.close()
 
     def run_empty(self):
