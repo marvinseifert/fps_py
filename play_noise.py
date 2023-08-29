@@ -28,7 +28,7 @@ class Presenter:
 
     """
 
-    def __init__(self, config_dict, queue, lock):
+    def __init__(self, config_dict, queue, sync_queue, lock, mode):
         """
         Parameters
         ----------
@@ -53,7 +53,9 @@ class Presenter:
         """
 
         self.queue = queue
+        self.sync_queue = sync_queue
         self.lock = lock
+        self.mode = mode
         settings.WINDOW['class'] = 'moderngl_window.context.pyglet.Window'  # using a pyglet window
         settings.WINDOW['gl_version'] = config_dict["gl_version"]
         settings.WINDOW['size'] = config_dict["window_size"]
@@ -107,6 +109,17 @@ class Presenter:
                 self.run_empty()  # Run the empty loop
             elif command == "destroy":
                 self.window.close()  # Close the window
+
+    def synchronize(self):
+        if self.mode == "lead":
+            with self.lock:
+                self.sync_queue.put("next_frame")
+        else:
+            while self.sync_queue.empty():
+                command = self.sync_queue.get()
+                if command == "next_frame":
+                    break
+
 
     def send_trigger(self):
         """Send a trigger signal to the Arduino."""
@@ -206,6 +219,7 @@ class Presenter:
                     elapsed_time = start_time - last_update
 
                     if elapsed_time >= time_per_frame:  # Wait for correct time to present the next frame
+                        self.synchronize()
 
                         if current_pattern_index % change_logic == 0:
                             if current_pattern_index != 0:
@@ -228,12 +242,13 @@ class Presenter:
 
                         # Swap buffers after rendering
 
+
                         self.window.swap_buffers()
                         self.send_trigger()  # Send a trigger signal to the Arduino
 
                         # Measure frame duration
                         frame_duration = time.time() - start_time
-                        print(f"{frame_duration * 1000:.4f}")
+                        #print(f"{frame_duration * 1000:.4f}")
                         if frame_duration > time_per_frame:
                             # If the frame duration exceeds the desired frame duration, print a warning
                             print(
@@ -312,7 +327,7 @@ def load_3d_patterns(file):
     return noise, width, height, frames, frame_rate
 
 
-def pyglet_app(config, queue, lock):
+def pyglet_app_lead(config, queue, sync_queue, lock):
     """
     Start the pyglet app. This function is used to spawn the pyglet app in a separate process.
     Parameters
@@ -331,7 +346,31 @@ def pyglet_app(config, queue, lock):
     queue : multiprocessing.Queue
         Queue for communication with the main process (gui).
     """
-    Noise = Presenter(config, queue, lock)
+    Noise = Presenter(config, queue, sync_queue, lock, "lead")
+    Noise.run_empty()  # Establish the empty loop
+
+
+
+def pyglet_app_follow(config, queue, sync_queue, lock):
+    """
+    Start the pyglet app. This function is used to spawn the pyglet app in a separate process.
+    Parameters
+    ----------
+    config : dict
+        Configuration dictionary.
+        Keys:
+            width : int
+                Width of the window.
+            height : int
+                Height of the window.
+            fullscreen : bool
+                Fullscreen mode.
+            screen : int
+                Screen number.
+    queue : multiprocessing.Queue
+        Queue for communication with the main process (gui).
+    """
+    Noise = Presenter(config, queue, sync_queue, lock, "follow")
     Noise.run_empty()  # Establish the empty loop
 
 # Can run the pyglet app from here for testing purposes if needed

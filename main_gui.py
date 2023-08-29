@@ -11,7 +11,7 @@ import shuffle_noise
 class NoiseGeneratorApp:
     """Class for the Noise Generator GUI."""
 
-    def __init__(self, root, queue, lock):
+    def __init__(self, root, queue1, queue2, lock):
         """
         Parameters
         ----------
@@ -22,7 +22,8 @@ class NoiseGeneratorApp:
 
         """
         self.lock = lock
-        self.queue = queue
+        self.queue1 = queue1
+        self.queue2 = queue2
         self.root = root
         self.root.title("Noise Generator GUI")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -204,14 +205,14 @@ class NoiseGeneratorApp:
         queue_data = {"file": noise_name, "loops": int(self.loop_entry.get()), "colours": self.colours.get(),
                       "change_logic": int(self.colour_change.get())}
         with self.lock:
-            self.queue.put(queue_data) # Put the noise name in the queue for the pyglet thread to read
-            self.queue.put(queue_data)
+            self.queue1.put(queue_data) # Put the noise name in the queue for the pyglet thread to read
+            self.queue2.put(queue_data)
 
     def on_stop_noise(self):
         """Stop the noise playback."""
         with self.lock:
-            self.queue.put("stop") # Put "stop" in the queue for the pyglet thread to read
-
+            self.queue1.put("stop") # Put "stop" in the queue for the pyglet thread to read
+            self.queue2.put("stop")  # Put "stop" in the queue for the pyglet thread to read
 
     def refresh_file_list(self):
         """Refresh the list of .h5py files in the stimuli directory."""
@@ -293,12 +294,14 @@ class NoiseGeneratorApp:
         """Called when the window is closed."""
         # Can add cleanup here if needed
         with self.lock:
-            self.queue.put("destroy") # Put "destroy" in the queue for the pyglet thread.
+            self.queue1.put("destroy") # Put "destroy" in the queue for the pyglet thread.
+            self.queue2.put("stop")  # Put "stop" in the queue for the pyglet thread to read
+
         # Will be read by the pyglet thread to close the window.
         self.root.destroy()
 
 
-def tkinter_app(queue, lock):
+def tkinter_app(queue1,queue2, lock):
     """Create the tkinter GUI and run the mainloop. Used to run the GUI in a separate process.
     Parameters
     ----------
@@ -307,7 +310,7 @@ def tkinter_app(queue, lock):
     """
 
     root = tk.Tk() # Create the root window
-    app = NoiseGeneratorApp(root, queue, lock) # Create the NoiseGeneratorApp instance
+    app = NoiseGeneratorApp(root, queue1, queue2, lock) # Create the NoiseGeneratorApp instance
     root.protocol("WM_DELETE_WINDOW", app.on_close) # Set the on_close method as the callback for the close button
     root.mainloop() # Run the mainloop
 

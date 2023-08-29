@@ -4,7 +4,7 @@
 
 from multiprocessing import Process, Queue, Lock
 from main_gui import tkinter_app
-from play_noise import pyglet_app
+from play_noise import pyglet_app_lead, pyglet_app_follow
 
 
 
@@ -19,11 +19,13 @@ config_dict = {
 
 # Start the GUI and the noise presentation in separate processes
 if __name__ == '__main__':
-    queue = Queue() # Queue for communication between the processes
+    queue1 = Queue() # Queue for communication between the processes
+    queue2 = Queue()
+    sync_queue = Queue()
     queue_lock = Lock()
-    p1 = Process(target=tkinter_app, args=(queue,queue_lock)) # Start the GUI
-    p2 = Process(target=pyglet_app, args=(config_dict, queue,queue_lock)) # Start the pyglet app
-    p3 = Process(target=pyglet_app, args=(config_dict, queue,queue_lock))  # Start the pyglet app
+    p1 = Process(target=tkinter_app, args=(queue1, queue2,queue_lock)) # Start the GUI
+    p2 = Process(target=pyglet_app_lead, args=(config_dict, queue1,sync_queue,queue_lock)) # Start the pyglet app
+    p3 = Process(target=pyglet_app_follow, args=(config_dict, queue2,sync_queue,queue_lock))  # Start the pyglet app
 
     p1.start()
     p2.start()
