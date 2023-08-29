@@ -46,12 +46,12 @@ This should open the gui window and the noise window. </br>
 ## Creating noise
 The noise can be created using the parameters "checkerboard size", "window size", "noise frequency" and
 "noise duration". </br>
-Checkerboard size refers to the size of a single checker in px. </br>
-Window size refers to the size of the window  in which the noise will be displayed in px. </br>
-Noise frequency refers to the frequency by which the checkerboard pattern will be updated </br>
-Noise duration refers to the duration of the noise in minutes </br>
+**Checkerboard size** refers to the size of a single checker in px. </br>
+**Window size** refers to the size of the window  in which the noise will be displayed in px. </br>
+**Noise frequency** refers to the frequency by which the checkerboard pattern will be updated </br>
+**Noise duration** refers to the duration of the noise in minutes </br>
 
-You can enter the name of the noise file into the field left to the "Generate Noise" button. </br>
+You can enter the name of the noise file into the field left to the "Generate Noise" button. This file will be stored in /stimuli folder</br>
 If you want to have shuffled noise, you can check the "Shuffle" box. The shuffle logic is shuffle every frame </br>
 and shuffle 4 positions in x and y, resulting in 16 different positions in total. </br>
 The "Estimated size" text shows the estimated size of the noise file. </br>
@@ -76,3 +76,9 @@ at the specified port every noise frame. </br>
 
 **That's it, enjoy the noise!** </br>
 ![Noise](noise.PNG)
+
+# Future work:
+- Implement colour noise (this is already in the shaders, just needs to be updated in the play_noise.py script)
+- Implement fullscreen on secondary monitor (this is a bug in moderngl_window) </br>
+- Expand so single boxes can be shown and moved around (experimental feature, look at the "moving_box.py" script)
+- Better exception handling
