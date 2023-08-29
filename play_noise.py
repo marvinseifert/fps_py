@@ -88,11 +88,11 @@ class Presenter:
         """
         while not self.window.is_closing:
             self.window.use()
-            self.window.ctx.clear(0.5, 0.5, 0.5, 1.0) # Clear the window with a grey background
-            self.window.swap_buffers() # Swap the buffers (update the window content)
-            self.communicate() # Check for commands from the main process (gui)
-            time.sleep(0.001) # Sleep for 1 ms to avoid busy waiting
-        self.window.close() # Close the window in case it is closed by the user
+            self.window.ctx.clear(0.5, 0.5, 0.5, 1.0)  # Clear the window with a grey background
+            self.window.swap_buffers()  # Swap the buffers (update the window content)
+            self.communicate()  # Check for commands from the main process (gui)
+            time.sleep(0.001)  # Sleep for 1 ms to avoid busy waiting
+        self.window.close()  # Close the window in case it is closed by the user
 
     def communicate(self):
         """
