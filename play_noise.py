@@ -28,7 +28,7 @@ class Presenter:
 
     """
 
-    def __init__(self, config_dict, queue):
+    def __init__(self, config_dict, queue, lock):
         """
         Parameters
         ----------
@@ -53,6 +53,7 @@ class Presenter:
         """
 
         self.queue = queue
+        self.lock = lock
         settings.WINDOW['class'] = 'moderngl_window.context.pyglet.Window'  # using a pyglet window
         settings.WINDOW['gl_version'] = config_dict["gl_version"]
         settings.WINDOW['size'] = config_dict["window_size"]
@@ -92,8 +93,12 @@ class Presenter:
         """
         Check for commands from the main process (gui). If a command is found, execute it.
         """
-        if not self.queue.empty():
-            command = self.queue.get()
+        command = None
+        with self.lock:
+            if not self.queue.empty():
+                command = self.queue.get()
+
+        if command:
             if type(command) == dict:
                 self.play_noise(command)
             elif command == "stop":  # If the command is "stop", stop the presentation
@@ -228,6 +233,7 @@ class Presenter:
 
                         # Measure frame duration
                         frame_duration = time.time() - start_time
+                        print(f"{frame_duration * 1000:.4f}")
                         if frame_duration > time_per_frame:
                             # If the frame duration exceeds the desired frame duration, print a warning
                             print(
@@ -238,11 +244,12 @@ class Presenter:
                         current_pattern_index += 1
                         # If the last frame was presented, stop the presentation
                         if current_pattern_index > len(patterns) - 1:
+
                             # self.run_empty()
                             break
-                    else:
+                    #else:
                         # Sleep for a short duration to avoid busy waiting
-                        time.sleep(0.001)  # Sleep for 1 millisecond
+                        #time.sleep(0.001)  # Sleep for 1 millisecond
             self.send_colour("O")
             for pattern in patterns:
                 pattern.release()
@@ -305,7 +312,7 @@ def load_3d_patterns(file):
     return noise, width, height, frames, frame_rate
 
 
-def pyglet_app(config, queue):
+def pyglet_app(config, queue, lock):
     """
     Start the pyglet app. This function is used to spawn the pyglet app in a separate process.
     Parameters
@@ -324,7 +331,7 @@ def pyglet_app(config, queue):
     queue : multiprocessing.Queue
         Queue for communication with the main process (gui).
     """
-    Noise = Presenter(config, queue)
+    Noise = Presenter(config, queue, lock)
     Noise.run_empty()  # Establish the empty loop
 
 # Can run the pyglet app from here for testing purposes if needed
