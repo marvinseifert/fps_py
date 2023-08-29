@@ -20,9 +20,6 @@ def connect_to_arduino(port='COM3', baud_rate=9600):
         return None
 
 
-
-
-
 class Presenter:
     """
     This class is responsible for presenting the stimuli. It is a wrapper around the pyglet window class and the
@@ -30,7 +27,6 @@ class Presenter:
     responsible for communicating with the main process (gui) via a queue.
 
     """
-
 
     def __init__(self, config_dict, queue):
         """
@@ -56,24 +52,22 @@ class Presenter:
 
         """
 
-
         self.queue = queue
-        settings.WINDOW['class'] = 'moderngl_window.context.pyglet.Window' # using a pyglet window
+        settings.WINDOW['class'] = 'moderngl_window.context.pyglet.Window'  # using a pyglet window
         settings.WINDOW['gl_version'] = config_dict["gl_version"]
         settings.WINDOW['size'] = config_dict["window_size"]
-        settings.WINDOW['aspect_ratio'] = None #Sets the aspect ratio to the window's aspect ratio
+        settings.WINDOW['aspect_ratio'] = None  # Sets the aspect ratio to the window's aspect ratio
         settings.WINDOW["fullscreen"] = config_dict["fullscreen"]
         settings.WINDOW["samples"] = 0
         settings.WINDOW["double_buffer"] = True
         settings.WINDOW["vsync"] = True
 
-
         self.window = moderngl_window.create_window_from_settings()
-        self.window.position = (config_dict["x_shift"], config_dict["y_shift"]) # Shift the window
-        self.window.init_mgl_context() # Initialize the moderngl context
-        self.stop = False # Flag for stopping the presentation
-        self.window.set_default_viewport() # Set the viewport to the window size
-        self.arduino = connect_to_arduino() # Establish a connection to the Arduino
+        self.window.position = (config_dict["x_shift"], config_dict["y_shift"])  # Shift the window
+        self.window.init_mgl_context()  # Initialize the moderngl context
+        self.stop = False  # Flag for stopping the presentation
+        self.window.set_default_viewport()  # Set the viewport to the window size
+        self.arduino = connect_to_arduino()  # Establish a connection to the Arduino
 
     def __del__(self):
         if self.arduino:
@@ -102,12 +96,12 @@ class Presenter:
             command = self.queue.get()
             if type(command) == dict:
                 self.play_noise(command)
-            elif command == "stop": # If the command is "stop", stop the presentation
+            elif command == "stop":  # If the command is "stop", stop the presentation
                 self.stop = False  # Trigger the stop flag for next time
                 self.send_colour("O")
-                self.run_empty() # Run the empty loop
+                self.run_empty()  # Run the empty loop
             elif command == "destroy":
-                self.window.close() # Close the window
+                self.window.close()  # Close the window
 
     def send_trigger(self):
         """Send a trigger signal to the Arduino."""
@@ -140,12 +134,12 @@ class Presenter:
         change_logic = noise_dict["change_logic"]
 
         colours = colours.split(",")
-        #colours = [x for x in colours for _ in range(change_logic)]
+        # colours = [x for x in colours for _ in range(change_logic)]
 
-        all_patterns_3d, width, height, frames, desired_fps  = load_3d_patterns(file) # Load the noise data
+        all_patterns_3d, width, height, frames, desired_fps = load_3d_patterns(file)  # Load the noise data
 
-        colour_repeats = int(np.ceil(frames/change_logic/len(colours)))
-        colours = colours*colour_repeats
+        colour_repeats = int(np.ceil(frames / change_logic / len(colours)))
+        colours = colours * colour_repeats
 
         # Establish the texture for each noise frame
         patterns = [
@@ -163,8 +157,8 @@ class Presenter:
         texture_aspect = width / height
 
         if window_aspect != texture_aspect:
-            scale_x = width/window_width
-            scale_y = height/window_height
+            scale_x = width / window_width
+            scale_y = height / window_height
         else:
             scale_x = 1
             scale_y = 1
@@ -180,11 +174,9 @@ class Presenter:
             scale_x, -scale_y  # bottom right
         ], dtype=np.float32)
 
-
         # Create the buffer and vertex array object for the noise
         vbo = self.window.ctx.buffer(quad.tobytes())
         vao = self.window.ctx.simple_vertex_array(program, vbo, 'in_pos')
-
 
         # Establish the time per frame for the desired fps
         time_per_frame = 1.0 / desired_fps
@@ -202,22 +194,20 @@ class Presenter:
 
                 while current_pattern_index <= frames:
 
-
                     self.communicate()
 
                     self.window.use()  # Ensure the correct context is being used
                     start_time = time.time()  # Start time for this frame
                     elapsed_time = start_time - last_update
 
-                    if elapsed_time >= time_per_frame: # Wait for correct time to present the next frame
+                    if elapsed_time >= time_per_frame:  # Wait for correct time to present the next frame
 
                         if current_pattern_index % change_logic == 0:
                             if current_pattern_index != 0:
                                 c_index += 1
                                 c = colours[c_index]
 
-
-                        self.send_colour(c)
+                        self.send_colour(c)  # Sends colour to Arduino
 
                         # Clear the window
                         self.window.ctx.clear(0.5, 0.5, 0.5)
@@ -248,7 +238,7 @@ class Presenter:
                         current_pattern_index += 1
                         # If the last frame was presented, stop the presentation
                         if current_pattern_index > len(patterns) - 1:
-                            #self.run_empty()
+                            # self.run_empty()
                             break
                     else:
                         # Sleep for a short duration to avoid busy waiting
@@ -260,6 +250,7 @@ class Presenter:
             vao.release()
             write_log(noise_dict)
             self.run_empty()
+
 
 def write_log(noise_dict):
     """
@@ -309,11 +300,9 @@ def load_3d_patterns(file):
     width = size[2]
     height = size[1]
     frames = size[0]
-    #noise = np.asfortranarray(noise)
+    # noise = np.asfortranarray(noise)
 
     return noise, width, height, frames, frame_rate
-
-
 
 
 def pyglet_app(config, queue):
@@ -336,19 +325,8 @@ def pyglet_app(config, queue):
         Queue for communication with the main process (gui).
     """
     Noise = Presenter(config, queue)
-    Noise.run_empty() # Establish the empty loop
-
-
+    Noise.run_empty()  # Establish the empty loop
 
 # Can run the pyglet app from here for testing purposes if needed
 # if __name__ == '__main__':
 #     pyglet_app(Queue())
-
-
-
-
-
-
-
-
-

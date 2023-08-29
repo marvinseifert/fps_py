@@ -63,6 +63,10 @@ To display noise, select the noise file you want to play in the list and click t
 The noise will be displayed in the window. </br>
 To stop the noise, click the "stop noise" button. </br>
 
+
+## Log file
+The log file will be stored in the /logs folder. </br>
+At the moment it is very simple, it just logs the time when the noise was started, its parameters and how often it was looped <br/>
 ## Additional settings
 You can loop the noise by increasing the number in the "Loops" field. </br>
 
