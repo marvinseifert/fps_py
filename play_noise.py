@@ -69,7 +69,7 @@ class Presenter:
 
 
         self.window = moderngl_window.create_window_from_settings()
-        self.window.position = (config_dict["y_shift"], config_dict["x_shift"]) # Shift the window
+        self.window.position = (config_dict["x_shift"], config_dict["y_shift"]) # Shift the window
         self.window.init_mgl_context() # Initialize the moderngl context
         self.stop = False # Flag for stopping the presentation
         self.window.set_default_viewport() # Set the viewport to the window size
