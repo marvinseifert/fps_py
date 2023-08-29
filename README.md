@@ -68,6 +68,11 @@ You can loop the noise by increasing the number in the "Loops" field. </br>
 
 Colour logic is experimental and not fully implemented. </br>
 
+## Triggering
+
+If you want to trigger the noise using Arduino open the play_noise.py file and look for the function called </br>
+_connect_to_arduino_ and change the port to the port of your Arduino. The script will send a "T" in bytecode to the Arduino</br>
+at the specified port every noise frame. </br>
 
 **That's it, enjoy the noise!** </br>
 ![Noise](noise.PNG)
