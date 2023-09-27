@@ -16,6 +16,7 @@ config_dict = {
     "window_size": (500, 500),
     "fullscreen": False}
 
+#TODO add shared time value
 
 # Start the GUI and the noise presentation in separate processes
 if __name__ == '__main__':
