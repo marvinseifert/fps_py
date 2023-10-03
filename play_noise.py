@@ -113,7 +113,8 @@ class Presenter:
     def synchronize(self):
         if self.mode == "lead":
             with self.lock:
-                self.sync_queue.put("next_frame")
+                for _ in range(2):
+                    self.sync_queue.put("next_frame")
         else:
             while self.sync_queue.empty():
                 command = self.sync_queue.get()
@@ -150,6 +151,7 @@ class Presenter:
         loops = noise_dict["loops"]
         colours = noise_dict["colours"]
         change_logic = noise_dict["change_logic"]
+        s_frames = noise_dict["s_frames"]
 
         colours = colours.split(",")
         # colours = [x for x in colours for _ in range(change_logic)]
@@ -197,14 +199,14 @@ class Presenter:
         vao = self.window.ctx.simple_vertex_array(program, vbo, 'in_pos')
 
         # Establish the time per frame for the desired fps
-        time_per_frame = 1.0 / desired_fps
-        last_update = time.time()
+
+        last_update = time.perf_counter()
+        time_per_frame = 1 / desired_fps
 
         # Main loop for presenting the noise
         while not self.window.is_closing:
 
-            for loop in range(loops):
-
+            for _ in range(loops):
                 # Check for commands from the main process (gui) (for example stop commands)
                 current_pattern_index = 0
                 c_index = 0
@@ -215,11 +217,11 @@ class Presenter:
                     self.communicate()
 
                     self.window.use()  # Ensure the correct context is being used
-                    start_time = time.time()  # Start time for this frame
-                    elapsed_time = start_time - last_update
+                    start_time = time.perf_counter()  # Start time for this frame
 
-                    if elapsed_time >= time_per_frame:  # Wait for correct time to present the next frame
-                        self.synchronize()
+
+                    if start_time >= s_frames[current_pattern_index]:  # Wait for correct time to present the next frame
+                        #self.synchronize()
 
                         if current_pattern_index % change_logic == 0:
                             if current_pattern_index != 0:
@@ -247,24 +249,19 @@ class Presenter:
                         self.send_trigger()  # Send a trigger signal to the Arduino
 
                         # Measure frame duration
-                        frame_duration = time.time() - start_time
+                        frame_duration = time.perf_counter() - start_time
                         #print(f"{frame_duration * 1000:.4f}")
                         if frame_duration > time_per_frame:
                             # If the frame duration exceeds the desired frame duration, print a warning
                             print(
                                 f"WARNING: Frame duration of {frame_duration * 1000:.2f} ms exceeds the desired {time_per_frame * 1000:.2f} ms!")
-
-                        # Update the last update time
-                        last_update = start_time
                         current_pattern_index += 1
                         # If the last frame was presented, stop the presentation
                         if current_pattern_index > len(patterns) - 1:
 
                             # self.run_empty()
                             break
-                    #else:
-                        # Sleep for a short duration to avoid busy waiting
-                        #time.sleep(0.001)  # Sleep for 1 millisecond
+
             self.send_colour("O")
             for pattern in patterns:
                 pattern.release()
