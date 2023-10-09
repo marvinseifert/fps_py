@@ -1,4 +1,4 @@
-glcontext==2.4.0 ; python_version >= "3.10" and python_version < "4.0"
+poeglcontext==2.4.0 ; python_version >= "3.10" and python_version < "4.0"
 h5py==3.9.0 ; python_version >= "3.10" and python_version < "4.0"
 moderngl-window==2.4.4 ; python_version >= "3.10" and python_version < "4.0"
 moderngl==5.8.2 ; python_version >= "3.10" and python_version < "4.0"

@@ -10,10 +10,10 @@ from play_noise import pyglet_app
 
 # Configuration dictionary for the pyglet app window. Change according to your needs.
 config_dict = {
-    "y_shift": -500,
-    "x_shift": 2560,
+    "y_shift": 0,
+    "x_shift": 400,
     "gl_version": (4, 1),
-    "window_size": (1080, 1920),
+    "window_size": (800, 800),
     "fullscreen": False}
 
 

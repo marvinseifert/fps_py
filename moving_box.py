@@ -31,13 +31,13 @@ def generate_moving_box(box_width, box_height, frame_num, total_frames, width_in
     image = np.zeros((height_in_pixels, width_in_pixels), dtype=np.uint8)
 
     # Determine the box's x position based on the current frame number
-    start_x = frame_num
+    start_x = frame_num*4
     end_x = start_x + box_width
 
     # Allow box to go out of bounds, but ensure at least 1 pixel remains visible in the last frame
-    if end_x > width_in_pixels + box_width - 1:
-        end_x = width_in_pixels
-        start_x = end_x - 1
+    # if end_x > width_in_pixels + box_width - 1:
+    #     end_x = width_in_pixels
+    #     start_x = end_x - 1
 
     # Determine the box's y position (centered vertically)
     start_y = (height_in_pixels - box_height) // 2
@@ -88,4 +88,4 @@ def generate_and_store_moving_box_array(frames, box_width, box_height, width_in_
 # Instead, you can use the provided function in your local environment after installing h5py.
 
 
-generate_and_store_moving_box_array(100, 50, 500, 500, 500, 30, "stimuli/MovingLine.h5")
+generate_and_store_moving_box_array(800, 50, 800, 800, 800, 30, "stimuli/MovingLine.h5")
