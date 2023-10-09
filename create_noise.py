@@ -7,56 +7,56 @@ import cv2
 
 # %%
 
-# def generate_checkerboard_pattern(checker_size, width_in_pixels, height_in_pixels):
-#     """
-#     Generate a checkerboard pattern with a given checker size and dimensions.
-#
-#     Parameters
-#     ----------
-#     checker_size : int
-#         The size of the checkerboard squares in pixels.
-#     width_in_pixels : int
-#         The width of the pattern in pixels.
-#     height_in_pixels : int
-#         The height of the pattern in pixels.
-#
-#     """
-#     # Calculate the number of squares based on pixel resolution
-#     pattern_width = width_in_pixels // checker_size
-#     pattern_height = height_in_pixels // checker_size
-#
-#     pattern_shape = (pattern_width, pattern_height)
-#     pattern = np.random.randint(0, 2, pattern_shape, dtype=np.uint8) * 255
-#     pattern_texture = np.repeat(np.repeat(pattern, checker_size, axis=0), checker_size, axis=1)
-#
-#     return pattern_texture
-
-
-import numpy as np
-
-
 def generate_checkerboard_pattern(checker_size, width_in_pixels, height_in_pixels):
+    """
+    Generate a checkerboard pattern with a given checker size and dimensions.
+
+    Parameters
+    ----------
+    checker_size : int
+        The size of the checkerboard squares in pixels.
+    width_in_pixels : int
+        The width of the pattern in pixels.
+    height_in_pixels : int
+        The height of the pattern in pixels.
+
+    """
+    # Calculate the number of squares based on pixel resolution
     pattern_width = width_in_pixels // checker_size
     pattern_height = height_in_pixels // checker_size
-    pattern_shape = (pattern_width, pattern_height)
 
-    pattern = np.random.randint(0, 2, pattern_shape, dtype=np.uint8)
+    pattern_shape = (pattern_width, pattern_height)
+    pattern = np.random.randint(0, 2, pattern_shape, dtype=np.uint8) * 255
     pattern_texture = np.repeat(np.repeat(pattern, checker_size, axis=0), checker_size, axis=1)
 
-    # Ensure color_texture is the same shape as pattern_texture
-    color_texture = np.random.randint(0, 256, (height_in_pixels, width_in_pixels, 3), dtype=np.uint8)
+    return pattern_texture
 
-    # Diagnostics: print shapes and parameters
-    print(f"Checker size: {checker_size}, Width: {width_in_pixels}, Height: {height_in_pixels}")
-    print(f"Pattern texture shape: {pattern_texture.shape}, Color texture shape: {color_texture.shape}")
 
-    # Expand dims of pattern_texture for broadcasting
-    pattern_texture_expanded = np.expand_dims(pattern_texture, axis=-1)
-
-    # Use np.where for assigning color
-    pattern_texture_color = np.where(pattern_texture_expanded, color_texture, 0)
-
-    return pattern_texture_color
+# import numpy as np
+#
+#
+# def generate_checkerboard_pattern(checker_size, width_in_pixels, height_in_pixels):
+#     pattern_width = width_in_pixels // checker_size
+#     pattern_height = height_in_pixels // checker_size
+#     pattern_shape = (pattern_width, pattern_height)
+#
+#     pattern = np.random.randint(0, 2, pattern_shape, dtype=np.uint8)
+#     pattern_texture = np.repeat(np.repeat(pattern, checker_size, axis=0), checker_size, axis=1)
+#
+#     # Ensure color_texture is the same shape as pattern_texture
+#     color_texture = np.random.randint(0, 256, (height_in_pixels, width_in_pixels, 3), dtype=np.uint8)
+#
+#     # Diagnostics: print shapes and parameters
+#     print(f"Checker size: {checker_size}, Width: {width_in_pixels}, Height: {height_in_pixels}")
+#     print(f"Pattern texture shape: {pattern_texture.shape}, Color texture shape: {color_texture.shape}")
+#
+#     # Expand dims of pattern_texture for broadcasting
+#     pattern_texture_expanded = np.expand_dims(pattern_texture, axis=-1)
+#
+#     # Use np.where for assigning color
+#     pattern_texture_color = np.where(pattern_texture_expanded, color_texture, 0)
+#
+#     return pattern_texture_color
 
 
 # %%
