@@ -28,7 +28,7 @@ class Presenter:
 
     """
 
-    def __init__(self, config_dict, queue):
+    def __init__(self, config_dict, queue, sync_queue, lock, mode):
         """
         Parameters
         ----------
@@ -53,6 +53,9 @@ class Presenter:
         """
 
         self.queue = queue
+        self.sync_queue = sync_queue
+        self.lock = lock
+        self.mode = mode
         settings.WINDOW['class'] = 'moderngl_window.context.pyglet.Window'  # using a pyglet window
         settings.WINDOW['gl_version'] = config_dict["gl_version"]
         settings.WINDOW['size'] = config_dict["window_size"]
@@ -92,8 +95,12 @@ class Presenter:
         """
         Check for commands from the main process (gui). If a command is found, execute it.
         """
-        if not self.queue.empty():
-            command = self.queue.get()
+        command = None
+        with self.lock:
+            if not self.queue.empty():
+                command = self.queue.get()
+
+        if command:
             if type(command) == dict:
                 self.play_noise(command)
             elif command == "stop":  # If the command is "stop", stop the presentation
@@ -102,6 +109,18 @@ class Presenter:
                 self.run_empty()  # Run the empty loop
             elif command == "destroy":
                 self.window.close()  # Close the window
+
+    def synchronize(self):
+        if self.mode == "lead":
+            with self.lock:
+                for _ in range(2):
+                    self.sync_queue.put("next_frame")
+        else:
+            while self.sync_queue.empty():
+                command = self.sync_queue.get()
+                if command == "next_frame":
+                    break
+
 
     def send_trigger(self):
         """Send a trigger signal to the Arduino."""
@@ -133,6 +152,7 @@ class Presenter:
         loops = noise_dict["loops"]
         colours = noise_dict["colours"]
         change_logic = noise_dict["change_logic"]
+        s_frames = noise_dict["s_frames"]
 
         colours = colours.split(",")
         # colours = [x for x in colours for _ in range(change_logic)]
@@ -180,14 +200,14 @@ class Presenter:
         vao = self.window.ctx.simple_vertex_array(program, vbo, 'in_pos')
 
         # Establish the time per frame for the desired fps
-        time_per_frame = 1.0 / desired_fps
-        last_update = time.time()
+
+        last_update = time.perf_counter()
+        time_per_frame = 1 / desired_fps
 
         # Main loop for presenting the noise
         while not self.window.is_closing:
 
-            for loop in range(loops):
-
+            for _ in range(loops):
                 # Check for commands from the main process (gui) (for example stop commands)
                 current_pattern_index = 0
                 c_index = 0
@@ -198,10 +218,11 @@ class Presenter:
                     self.communicate()
 
                     self.window.use()  # Ensure the correct context is being used
-                    start_time = time.time()  # Start time for this frame
-                    elapsed_time = start_time - last_update
+                    start_time = time.perf_counter()  # Start time for this frame
 
-                    if elapsed_time >= time_per_frame:  # Wait for correct time to present the next frame
+
+                    if start_time >= s_frames[current_pattern_index]:  # Wait for correct time to present the next frame
+                        #self.synchronize()
 
                         if current_pattern_index % change_logic == 0:
                             if current_pattern_index != 0:
@@ -224,26 +245,24 @@ class Presenter:
 
                         # Swap buffers after rendering
 
+
                         self.window.swap_buffers()
                         self.send_trigger()  # Send a trigger signal to the Arduino
 
                         # Measure frame duration
-                        frame_duration = time.time() - start_time
+                        frame_duration = time.perf_counter() - start_time
+                        #print(f"{frame_duration * 1000:.4f}")
                         if frame_duration > time_per_frame:
                             # If the frame duration exceeds the desired frame duration, print a warning
                             print(
                                 f"WARNING: Frame duration of {frame_duration * 1000:.2f} ms exceeds the desired {time_per_frame * 1000:.2f} ms!")
-
-                        # Update the last update time
-                        last_update = start_time
                         current_pattern_index += 1
                         # If the last frame was presented, stop the presentation
                         if current_pattern_index > len(patterns) - 1:
+
                             # self.run_empty()
                             break
-                    else:
-                        # Sleep for a short duration to avoid busy waiting
-                        time.sleep(0.001)  # Sleep for 1 millisecond
+
             self.send_colour("O")
             for pattern in patterns:
                 pattern.release()
@@ -306,7 +325,7 @@ def load_3d_patterns(file):
     return noise, width, height, frames, frame_rate
 
 
-def pyglet_app(config, queue):
+def pyglet_app_lead(config, queue, sync_queue, lock):
     """
     Start the pyglet app. This function is used to spawn the pyglet app in a separate process.
     Parameters
@@ -325,7 +344,31 @@ def pyglet_app(config, queue):
     queue : multiprocessing.Queue
         Queue for communication with the main process (gui).
     """
-    Noise = Presenter(config, queue)
+    Noise = Presenter(config, queue, sync_queue, lock, "lead")
+    Noise.run_empty()  # Establish the empty loop
+
+
+
+def pyglet_app_follow(config, queue, sync_queue, lock):
+    """
+    Start the pyglet app. This function is used to spawn the pyglet app in a separate process.
+    Parameters
+    ----------
+    config : dict
+        Configuration dictionary.
+        Keys:
+            width : int
+                Width of the window.
+            height : int
+                Height of the window.
+            fullscreen : bool
+                Fullscreen mode.
+            screen : int
+                Screen number.
+    queue : multiprocessing.Queue
+        Queue for communication with the main process (gui).
+    """
+    Noise = Presenter(config, queue, sync_queue, lock, "follow")
     Noise.run_empty()  # Establish the empty loop
 
 # Can run the pyglet app from here for testing purposes if needed
