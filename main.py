@@ -18,6 +18,8 @@ config_dict = {
 
 
 
+
+
 # Start the GUI and the noise presentation in separate processes
 if __name__ == '__main__':
     queue1 = Queue() # Queue for communication between the processes
