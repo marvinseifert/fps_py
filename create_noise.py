@@ -1,8 +1,7 @@
 import numpy as np
 import h5py
-import cv2
-
-
+import blosc
+import hdf5plugin
 
 
 # %%
@@ -83,7 +82,8 @@ def generate_and_store_3d_array(frames, checkerboard_size, width_in_pixels, heig
                      range(frames)]
     stacked_patterns = np.stack(patterns_list, axis=0)  # This creates a 3D array
     with h5py.File(name, 'w') as f:
-        f.create_dataset('Noise', data=stacked_patterns, dtype="uint8")
+        f.create_dataset('Noise', data=stacked_patterns, dtype="uint8",
+                         compression=hdf5plugin.Blosc(cname='blosclz', clevel=9, shuffle=hdf5plugin.Blosc.NOSHUFFLE))
         f.create_dataset(name="Frame_Rate", data=fps, dtype="uint8")
         f.create_dataset(name="Checkerboard_Size", data=checkerboard_size, dtype="uint64")
         f.create_dataset(name="Shuffle", data=False, dtype="bool")

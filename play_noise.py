@@ -144,6 +144,7 @@ class Presenter:
         Parameters
         ----------
         file : str
+
             Path to the noise file.
 
         """
