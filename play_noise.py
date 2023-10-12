@@ -152,14 +152,17 @@ class Presenter:
         loops = noise_dict["loops"]
         colours = noise_dict["colours"]
         change_logic = noise_dict["change_logic"]
-        s_frames = noise_dict["s_frames"]
+        s_frames_temp = noise_dict["s_frames"]
+        s_frames = s_frames_temp.copy()
+        for loop in range(1,loops):
+            s_frames = np.concatenate((s_frames, s_frames_temp + loop * s_frames_temp[-1]))
 
         colours = colours.split(",")
         # colours = [x for x in colours for _ in range(change_logic)]
 
         all_patterns_3d, width, height, frames, desired_fps = load_3d_patterns(file)  # Load the noise data
 
-        colour_repeats = int(np.ceil(frames / change_logic / len(colours)))
+        colour_repeats = int(np.ceil(frames / len(colours)))
         colours = colours * colour_repeats
 
         # Establish the texture for each noise frame
@@ -204,64 +207,60 @@ class Presenter:
         last_update = time.perf_counter()
         time_per_frame = 1 / desired_fps
 
+        pattern_indices = np.arange(0, frames, 1, dtype=int)
+        pattern_indices = np.tile(pattern_indices, loops).tolist()
+        colours = np.arange(0, len(colours), 1, dtype=int)
+        colours = np.tile(colours, loops).tolist()
+        c = colours[0]
+
         # Main loop for presenting the noise
         while not self.window.is_closing:
-
             for _ in range(loops):
-                # Check for commands from the main process (gui) (for example stop commands)
-                current_pattern_index = 0
-                c_index = 0
-                c = colours[c_index]
 
-                while current_pattern_index <= frames:
+                for current_pattern_index in pattern_indices:
 
                     self.communicate()
-
-                    self.window.use()  # Ensure the correct context is being used
+                    # Ensure the correct context is being used
                     start_time = time.perf_counter()  # Start time for this frame
+                    while start_time < (s_frames[current_pattern_index]):
+                        start_time = time.perf_counter()  # Start time for this frame
+                    self.window.use()
+                    if current_pattern_index % change_logic == 0:
+                        c = colours[current_pattern_index]
 
+                    self.send_colour(c)  # Sends colour to Arduino
 
-                    if start_time >= s_frames[current_pattern_index]:  # Wait for correct time to present the next frame
-                        #self.synchronize()
+                    # Clear the window
+                    self.window.ctx.clear(0.5, 0.5, 0.5)
 
-                        if current_pattern_index % change_logic == 0:
-                            if current_pattern_index != 0:
-                                c_index += 1
-                                c = colours[c_index]
+                    # Bind the texture to texture unit 0
+                    patterns[current_pattern_index].use(location=0)
 
-                        self.send_colour(c)  # Sends colour to Arduino
+                    # Set the shader uniform to the index of the texture unit
+                    program['pattern'].value = 0
 
-                        # Clear the window
-                        self.window.ctx.clear(0.5, 0.5, 0.5)
+                    # Render the full screen quad
+                    vao.render(moderngl.TRIANGLES)
 
-                        # Bind the texture to texture unit 0
-                        patterns[current_pattern_index].use(location=0)
+                    # Swap buffers after rendering
 
-                        # Set the shader uniform to the index of the texture unit
-                        program['pattern'].value = 0
+                    self.window.swap_buffers()
+                    self.send_trigger()  # Send a trigger signal to the Arduino
 
-                        # Render the full screen quad
-                        vao.render(moderngl.TRIANGLES)
+                    # Measure frame duration
+                    frame_duration = time.perf_counter() - start_time
+                    #print(f"{frame_duration * 1000:.4f}")
+                    if frame_duration > (time_per_frame+0.016):
+                        # If the frame duration exceeds the desired frame duration, print a warning
+                        print(
+                            f"WARNING: Frame duration of {frame_duration * 1000:.2f} ms exceeds the desired {time_per_frame * 1000:.2f} ms!")
+                    current_pattern_index += 1
+                    # If the last frame was presented, stop the presentation
+                    if current_pattern_index > len(patterns) - 1:
 
-                        # Swap buffers after rendering
+                        # self.run_empty()
+                        break
 
-
-                        self.window.swap_buffers()
-                        self.send_trigger()  # Send a trigger signal to the Arduino
-
-                        # Measure frame duration
-                        frame_duration = time.perf_counter() - start_time
-                        #print(f"{frame_duration * 1000:.4f}")
-                        if frame_duration > time_per_frame:
-                            # If the frame duration exceeds the desired frame duration, print a warning
-                            print(
-                                f"WARNING: Frame duration of {frame_duration * 1000:.2f} ms exceeds the desired {time_per_frame * 1000:.2f} ms!")
-                        current_pattern_index += 1
-                        # If the last frame was presented, stop the presentation
-                        if current_pattern_index > len(patterns) - 1:
-
-                            # self.run_empty()
-                            break
 
             self.send_colour("O")
             for pattern in patterns:
@@ -314,9 +313,11 @@ def load_3d_patterns(file):
 
     """
     with h5py.File(f"stimuli/{file}", 'r') as f:
-        noise = f['Noise'][:]
+        noise = np.asarray(f['Noise'][:], dtype=np.uint8)
         frame_rate = f['Frame_Rate'][()]
+
     size = noise.shape
+    print(noise.dtype)
     width = size[2]
     height = size[1]
     frames = size[0]

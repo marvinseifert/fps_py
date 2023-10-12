@@ -213,14 +213,14 @@ class NoiseGeneratorApp:
         queue_data = {"file": noise_name, "loops": int(self.loop_entry.get()), "colours": self.colours.get(),
                       "change_logic": int(self.colour_change.get()), "s_frames": s_frames}
         with self.lock:
-            for _ in range(3):
+            for _ in range(1):
                 self.queue1.put(queue_data) # Put the noise name in the queue for the pyglet thread to read
 
 
     def on_stop_noise(self):
         """Stop the noise playback."""
         with self.lock:
-            for _ in range(3):
+            for _ in range(1):
                 self.queue1.put("stop") # Put "stop" in the queue for the pyglet thread to read
 
 

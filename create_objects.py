@@ -93,4 +93,4 @@ def create_square(duration, square_size, space_dim, path_func, name, **path_func
 
 #create_square(20*60, 100, (500,500), circle_path, "stimuli/Moving_Circle.h5", radius=150)
 
-create_square(20*60, (100, 500), (500,500), linear_path, "stimuli/Moving_Circle.h5", direction=(0,10))
+create_square(100, (100, 500), (500,500), linear_path, "stimuli/Moving_Circle.h5", direction=(0,10))
