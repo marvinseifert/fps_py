@@ -10,7 +10,7 @@ import csv
 import datetime
 
 
-def connect_to_arduino(port='COM3', baud_rate=9600):
+def connect_to_arduino(port='COM2', baud_rate=9600):
     """Establish a connection to the Arduino."""
     try:
         arduino = serial.Serial(port, baud_rate)
@@ -126,14 +126,14 @@ class Presenter:
         """Send a trigger signal to the Arduino."""
         if self.arduino:
             try:
-                self.arduino.write(b'T')  # Sending a 'T' as the trigger. Modify as needed.
+                self.arduino.write(b'\nT\n')  # Sending a 'T' as the trigger. Modify as needed.
             except Exception as e:
                 print(f"Error sending trigger to Arduino: {e}")
 
     def send_colour(self, colour):
         if self.arduino:
             try:
-                txt = f"{colour}".encode()  # Convert the colour string to bytes
+                txt = f"\n{colour}\n".encode("utf-8")  # Convert the colour string to bytes
                 self.arduino.write(txt)
             except Exception as e:
                 print(f"Error sending trigger to Arduino: {e}")
@@ -161,10 +161,9 @@ class Presenter:
         # colours = [x for x in colours for _ in range(change_logic)]
 
         all_patterns_3d, width, height, frames, desired_fps = load_3d_patterns(file)  # Load the noise data
-
-        colour_repeats = int(np.ceil(frames / len(colours)))
-        colours = colours * colour_repeats
-
+        colour_repeats = np.ceil(frames/(len(colours)*change_logic))
+        colours = np.repeat(np.asarray(colours), change_logic).tolist()
+        colours = colours * int(colour_repeats)
         # Establish the texture for each noise frame
         patterns = [
             self.window.ctx.texture((width, height), 1, all_patterns_3d[i, :, :].tobytes(),
@@ -209,9 +208,8 @@ class Presenter:
 
         pattern_indices = np.arange(0, frames, 1, dtype=int)
         pattern_indices = np.tile(pattern_indices, loops).tolist()
-        colours = np.arange(0, len(colours), 1, dtype=int)
-        colours = np.tile(colours, loops).tolist()
-        c = colours[0]
+
+        print(f"stimulus will start in {s_frames[0]-time.perf_counter()} seconds")
 
         # Main loop for presenting the noise
         while not self.window.is_closing:
@@ -228,7 +226,7 @@ class Presenter:
                     if current_pattern_index % change_logic == 0:
                         c = colours[current_pattern_index]
 
-                    self.send_colour(c)  # Sends colour to Arduino
+                        self.send_colour(c)  # Sends colour to Arduino
 
                     # Clear the window
                     self.window.ctx.clear(0.5, 0.5, 0.5)

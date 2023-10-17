@@ -304,8 +304,9 @@ class NoiseGeneratorApp:
         """Called when the window is closed."""
         # Can add cleanup here if needed
         with self.lock:
+            self.queue1.put("stop")  # Put "stop" in the queue for the pyglet thread to read
             self.queue1.put("destroy") # Put "destroy" in the queue for the pyglet thread.
-            self.queue2.put("stop")  # Put "stop" in the queue for the pyglet thread to read
+
 
         # Will be read by the pyglet thread to close the window.
         self.root.destroy()
@@ -367,8 +368,8 @@ def schedule_frames(frames, frame_rate):
 
     fps = frame_rate
     frame_duration = 1 / fps
-
-    s_frames = np.linspace(current_time+5, current_time + frames * frame_duration+5, frames)
+    buffer = 20
+    s_frames = np.linspace(current_time+buffer, current_time + frames * frame_duration+buffer, frames)
     return s_frames
 
 

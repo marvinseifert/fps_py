@@ -11,9 +11,9 @@ from play_noise import pyglet_app_lead, pyglet_app_follow
 # Configuration dictionary for the pyglet app window. Change according to your needs.
 config_dict = {
     "y_shift": 0,
-    "x_shift": 2000,
+    "x_shift": 1920,
     "gl_version": (4, 1),
-    "window_size": (800, 800),
+    "window_size": (1280, 800),
     "fullscreen": False}
 
 
