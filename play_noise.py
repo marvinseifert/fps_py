@@ -85,7 +85,8 @@ class Presenter:
         """
         while not self.window.is_closing:
             self.window.use()
-            self.window.ctx.clear(0.5, 0.5, 0.5, 1.0)  # Clear the window with a grey background
+            #self.window.ctx.clear(0.5, 0.5, 0.5, 1.0)  # Clear the window with a grey background
+            self.window.ctx.clear(0, 0, 0, 1.0)
             self.window.swap_buffers()  # Swap the buffers (update the window content)
             self.communicate()  # Check for commands from the main process (gui)
             time.sleep(0.001)  # Sleep for 1 ms to avoid busy waiting
@@ -154,8 +155,9 @@ class Presenter:
         change_logic = noise_dict["change_logic"]
         s_frames_temp = noise_dict["s_frames"]
         s_frames = s_frames_temp.copy()
+        first_frame_dur = np.diff(s_frames[0:2])
         for loop in range(1,loops):
-            s_frames = np.concatenate((s_frames, s_frames_temp + loop * s_frames_temp[-1]))
+            s_frames = np.concatenate((s_frames, s_frames_temp + loop*(s_frames_temp[-1] - s_frames_temp[0] + first_frame_dur)))
 
         colours = colours.split(",")
         # colours = [x for x in colours for _ in range(change_logic)]
@@ -213,51 +215,51 @@ class Presenter:
 
         # Main loop for presenting the noise
         while not self.window.is_closing:
-            for _ in range(loops):
 
-                for current_pattern_index in pattern_indices:
+            for idx, current_pattern_index in enumerate(pattern_indices):
 
-                    self.communicate()
-                    # Ensure the correct context is being used
+                self.communicate()
+                # Ensure the correct context is being used
+                start_time = time.perf_counter()  # Start time for this frame
+                while start_time < (s_frames[idx]):
                     start_time = time.perf_counter()  # Start time for this frame
-                    while start_time < (s_frames[current_pattern_index]):
-                        start_time = time.perf_counter()  # Start time for this frame
-                    self.window.use()
-                    if current_pattern_index % change_logic == 0:
-                        c = colours[current_pattern_index]
+                self.window.use()
+                if current_pattern_index % change_logic == 0:
+                    c = colours[current_pattern_index]
 
-                        self.send_colour(c)  # Sends colour to Arduino
+                    self.send_colour(c)  # Sends colour to Arduino
 
-                    # Clear the window
-                    self.window.ctx.clear(0.5, 0.5, 0.5)
+                # Clear the window
+                self.window.ctx.clear(0, 0, 0)
 
-                    # Bind the texture to texture unit 0
-                    patterns[current_pattern_index].use(location=0)
+                # Bind the texture to texture unit 0
+                patterns[current_pattern_index].use(location=0)
 
-                    # Set the shader uniform to the index of the texture unit
-                    program['pattern'].value = 0
+                # Set the shader uniform to the index of the texture unit
+                program['pattern'].value = 0
 
-                    # Render the full screen quad
-                    vao.render(moderngl.TRIANGLES)
+                # Render the full screen quad
+                vao.render(moderngl.TRIANGLES)
 
-                    # Swap buffers after rendering
+                # Swap buffers after rendering
 
-                    self.window.swap_buffers()
-                    self.send_trigger()  # Send a trigger signal to the Arduino
+                self.window.swap_buffers()
+                self.send_trigger()  # Send a trigger signal to the Arduino
 
-                    # Measure frame duration
-                    frame_duration = time.perf_counter() - start_time
-                    #print(f"{frame_duration * 1000:.4f}")
-                    if frame_duration > (time_per_frame+0.016):
-                        # If the frame duration exceeds the desired frame duration, print a warning
-                        print(
-                            f"WARNING: Frame duration of {frame_duration * 1000:.2f} ms exceeds the desired {time_per_frame * 1000:.2f} ms!")
-                    current_pattern_index += 1
-                    # If the last frame was presented, stop the presentation
-                    if current_pattern_index > len(patterns) - 1:
+                # Measure frame duration
+                frame_duration = time.perf_counter() - start_time
+                #print(f"{frame_duration * 1000:.4f}")
+                if frame_duration > (time_per_frame+0.016):
+                    # If the frame duration exceeds the desired frame duration, print a warning
+                    print(
+                        f"WARNING: Frame duration of {frame_duration * 1000:.2f} ms exceeds the desired {time_per_frame * 1000:.2f} ms!")
 
-                        # self.run_empty()
-                        break
+                # If the last frame was presented, stop the presentation
+                if current_pattern_index > len(pattern_indices)+1:
+
+                    # self.run_empty()
+                    break
+                current_pattern_index += 1
 
 
             self.send_colour("O")

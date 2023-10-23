@@ -369,7 +369,7 @@ def schedule_frames(frames, frame_rate):
     fps = frame_rate
     frame_duration = 1 / fps
     buffer = 20
-    s_frames = np.linspace(current_time+buffer, current_time + frames * frame_duration+buffer, frames)
+    s_frames = np.linspace(current_time+buffer, current_time + frames * frame_duration+buffer, frames+1)
     return s_frames
 
 
