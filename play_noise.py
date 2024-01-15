@@ -5,19 +5,10 @@ import time
 import h5py
 import numpy as np
 from pathlib import Path
-import serial
 import csv
 import datetime
 
 
-def connect_to_arduino(port='COM2', baud_rate=9600):
-    """Establish a connection to the Arduino."""
-    try:
-        arduino = serial.Serial(port, baud_rate)
-        return arduino
-    except Exception as e:
-        print(f"Error connecting to Arduino: {e}")
-        return None
 
 
 class Presenter:
@@ -28,7 +19,7 @@ class Presenter:
 
     """
 
-    def __init__(self, config_dict, queue, sync_queue, lock, mode):
+    def __init__(self, config_dict, queue, sync_queue, lock, arduino_obj,  mode):
         """
         Parameters
         ----------
@@ -70,7 +61,7 @@ class Presenter:
         self.window.init_mgl_context()  # Initialize the moderngl context
         self.stop = False  # Flag for stopping the presentation
         self.window.set_default_viewport()  # Set the viewport to the window size
-        self.arduino = connect_to_arduino()  # Establish a connection to the Arduino
+        self.arduino = arduino_obj  #Arduino connection
 
     def __del__(self):
         if self.arduino:
@@ -326,7 +317,7 @@ def load_3d_patterns(file):
     return noise, width, height, frames, frame_rate
 
 
-def pyglet_app_lead(config, queue, sync_queue, lock):
+def pyglet_app_lead(config, queue, sync_queue, lock, arduino_obj):
     """
     Start the pyglet app. This function is used to spawn the pyglet app in a separate process.
     Parameters
@@ -345,7 +336,7 @@ def pyglet_app_lead(config, queue, sync_queue, lock):
     queue : multiprocessing.Queue
         Queue for communication with the main process (gui).
     """
-    Noise = Presenter(config, queue, sync_queue, lock, "lead")
+    Noise = Presenter(config, queue, sync_queue, lock, arduino_obj,"lead")
     Noise.run_empty()  # Establish the empty loop
 
 
