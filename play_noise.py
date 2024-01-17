@@ -19,7 +19,7 @@ class Presenter:
 
     """
 
-    def __init__(self, config_dict, queue, sync_queue, lock, arduino_obj,  mode):
+    def __init__(self, config_dict, queue, sync_queue, lock, ard_queue, ard_lock, mode):
         """
         Parameters
         ----------
@@ -47,6 +47,8 @@ class Presenter:
         self.sync_queue = sync_queue
         self.lock = lock
         self.mode = mode
+        self.ard_queue = ard_queue
+        self.ard_lock = ard_lock
         settings.WINDOW['class'] = 'moderngl_window.context.pyglet.Window'  # using a pyglet window
         settings.WINDOW['gl_version'] = config_dict["gl_version"]
         settings.WINDOW['size'] = config_dict["window_size"]
@@ -61,12 +63,10 @@ class Presenter:
         self.window.init_mgl_context()  # Initialize the moderngl context
         self.stop = False  # Flag for stopping the presentation
         self.window.set_default_viewport()  # Set the viewport to the window size
-        self.arduino = arduino_obj  #Arduino connection
 
     def __del__(self):
-        if self.arduino:
-            self.send_colour("O")
-            self.arduino.close()
+        with self.ard_lock:
+            self.ard_queue.put("destroy")
 
     def run_empty(self):
         """
@@ -95,6 +95,8 @@ class Presenter:
         if command:
             if type(command) == dict:
                 self.play_noise(command)
+            elif command == "white_screen":
+                self.play_white()
             elif command == "stop":  # If the command is "stop", stop the presentation
                 self.stop = False  # Trigger the stop flag for next time
                 self.send_colour("O")
@@ -116,19 +118,14 @@ class Presenter:
 
     def send_trigger(self):
         """Send a trigger signal to the Arduino."""
-        if self.arduino:
-            try:
-                self.arduino.write(b'\nT\n')  # Sending a 'T' as the trigger. Modify as needed.
-            except Exception as e:
-                print(f"Error sending trigger to Arduino: {e}")
+        with self.ard_lock:
+            self.ard_queue.put("T")
+
 
     def send_colour(self, colour):
-        if self.arduino:
-            try:
-                txt = f"\n{colour}\n".encode("utf-8")  # Convert the colour string to bytes
-                self.arduino.write(txt)
-            except Exception as e:
-                print(f"Error sending trigger to Arduino: {e}")
+        """Send a colour signal to the Arduino."""
+        with self.ard_lock:
+            self.ard_queue.put(colour)
 
     def play_noise(self, noise_dict):
         """
@@ -261,6 +258,18 @@ class Presenter:
             write_log(noise_dict)
             self.run_empty()
 
+    def play_white(self):
+        """
+        This function presents a white screen until a stop command is received.
+        """
+
+        while not self.window.is_closing:
+            self.window.use()
+            self.window.ctx.clear(1, 1, 1)
+            self.window.swap_buffers()
+            self.communicate()
+            time.sleep(0.001)
+        self.window.close()
 
 def write_log(noise_dict):
     """
@@ -317,7 +326,7 @@ def load_3d_patterns(file):
     return noise, width, height, frames, frame_rate
 
 
-def pyglet_app_lead(config, queue, sync_queue, lock, arduino_obj):
+def pyglet_app_lead(config, queue, sync_queue, lock, ard_queue, ard_lock):
     """
     Start the pyglet app. This function is used to spawn the pyglet app in a separate process.
     Parameters
@@ -336,7 +345,7 @@ def pyglet_app_lead(config, queue, sync_queue, lock, arduino_obj):
     queue : multiprocessing.Queue
         Queue for communication with the main process (gui).
     """
-    Noise = Presenter(config, queue, sync_queue, lock, arduino_obj,"lead")
+    Noise = Presenter(config, queue, sync_queue, lock, ard_queue, ard_lock, "lead")
     Noise.run_empty()  # Establish the empty loop
 
 

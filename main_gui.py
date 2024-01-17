@@ -13,7 +13,7 @@ import numpy as np
 class NoiseGeneratorApp:
     """Class for the Noise Generator GUI."""
 
-    def __init__(self, root, queue1, lock, arduino_obj):
+    def __init__(self, root, queue1, lock, ard_queue, ard_lock):
         """
         Parameters
         ----------
@@ -25,8 +25,9 @@ class NoiseGeneratorApp:
         """
         self.lock = lock
         self.queue1 = queue1
+        self.ard_queue = ard_queue
+        self.ard_lock = ard_lock
         self.root = root
-        self.arduino = arduino_obj
         self.root.title("Noise Generator GUI")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.geometry("600x500")
@@ -83,6 +84,9 @@ class NoiseGeneratorApp:
 
         self.send_arduino_cmd = ttk.Button(self.left_frame, text="send to arduino", command=self.on_send_arduino_cmd)
         self.send_arduino_cmd.grid(row=8, column=1, pady=5, padx=0)
+
+        self.stop_arduino_cmd = ttk.Button(self.left_frame, text="stop arduino", command=self.stop_arduino)
+        self.stop_arduino_cmd.grid(row=9, column=1, pady=5, padx=0)
         # Size label
         self.size_label = ttk.Label(self.left_frame, text="")
         self.size_label.grid(row=5, column=1, padx=10, pady=5)
@@ -309,19 +313,30 @@ class NoiseGeneratorApp:
             pass
 
     def on_send_arduino_cmd(self, *args):
-        if self.arduino:
-            try:
-                command = self.arduino_cmd_var.get()
-                txt = f"\n{command}\n".encode("utf-8")
-                self.arduino.write(txt)
-            except Exception as e:
-                print("Could not send to arduino")
+        """Send the arduino command to the arduino."""
+        with self.lock:
+            self.queue1.put("white_screen")
+        with self.ard_lock:
+            self.ard_queue.put(self.arduino_cmd_var.get())
+
+    def stop_arduino(self, *args):
+        """Stop the arduino."""
+        with self.ard_lock:
+            self.ard_queue.put("b")
+        with self.lock:
+            self.queue1.put("stop")
+
+
     def on_close(self):
         """Called when the window is closed."""
         # Can add cleanup here if needed
+        # Disconnect Arduino
+        with self.ard_lock:
+            self.ard_queue.put("destroy")
         with self.lock:
             self.queue1.put("stop")  # Put "stop" in the queue for the pyglet thread to read
             self.queue1.put("destroy") # Put "destroy" in the queue for the pyglet thread.
+
 
 
         # Will be read by the pyglet thread to close the window.
@@ -330,7 +345,7 @@ class NoiseGeneratorApp:
 
 
 
-def tkinter_app(queue1, lock, arduino_obj):
+def tkinter_app(queue1, lock, ard_queue, ard_lock):
     """Create the tkinter GUI and run the mainloop. Used to run the GUI in a separate process.
     Parameters
     ----------
@@ -339,7 +354,7 @@ def tkinter_app(queue1, lock, arduino_obj):
     """
 
     root = tk.Tk() # Create the root window
-    app = NoiseGeneratorApp(root, queue1, lock, arduino_obj) # Create the NoiseGeneratorApp instance
+    app = NoiseGeneratorApp(root, queue1, lock, ard_queue, ard_lock) # Create the NoiseGeneratorApp instance
     root.protocol("WM_DELETE_WINDOW", app.on_close) # Set the on_close method as the callback for the close button
     root.mainloop() # Run the mainloop
 
