@@ -5,13 +5,15 @@ import create_noise
 from multiprocessing import Process, Queue
 import h5py
 import shuffle_noise
+import time
+import numpy as np
 
 
 
 class NoiseGeneratorApp:
     """Class for the Noise Generator GUI."""
 
-    def __init__(self, root, queue):
+    def __init__(self, root, queue1, lock):
         """
         Parameters
         ----------
@@ -21,7 +23,8 @@ class NoiseGeneratorApp:
             Queue for communication with the main process (gui).
 
         """
-        self.queue = queue
+        self.lock = lock
+        self.queue1 = queue1
         self.root = root
         self.root.title("Noise Generator GUI")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -194,20 +197,31 @@ class NoiseGeneratorApp:
         self.generate_noise_button.config(text="Generate Noise")
 
 
+
+
     def on_play_noise(self):
         """Play the selected noise file."""
 
         # Check selected file in the file_listbox
         index = self.file_listbox.curselection()
-        noise_name  = self.file_listbox.get(index[0])
-        queue_data = {"file": noise_name, "loops": int(self.loop_entry.get()), "colours": self.colours.get(),
-                      "change_logic": int(self.colour_change.get())}
+        noise_name = self.file_listbox.get(index[0])
 
-        self.queue.put(queue_data) # Put the noise name in the queue for the pyglet thread to read
+        _, _, frames, frame_rate = load_noise_info(noise_name)
+        s_frames = schedule_frames(frames, frame_rate)
+        print(s_frames)
+
+        queue_data = {"file": noise_name, "loops": int(self.loop_entry.get()), "colours": self.colours.get(),
+                      "change_logic": int(self.colour_change.get()), "s_frames": s_frames}
+        with self.lock:
+            for _ in range(3):
+                self.queue1.put(queue_data) # Put the noise name in the queue for the pyglet thread to read
+
 
     def on_stop_noise(self):
         """Stop the noise playback."""
-        self.queue.put("stop") # Put "stop" in the queue for the pyglet thread to read
+        with self.lock:
+            for _ in range(3):
+                self.queue1.put("stop") # Put "stop" in the queue for the pyglet thread to read
 
 
     def refresh_file_list(self):
@@ -289,12 +303,15 @@ class NoiseGeneratorApp:
     def on_close(self):
         """Called when the window is closed."""
         # Can add cleanup here if needed
-        self.queue.put("destroy") # Put "destroy" in the queue for the pyglet thread.
+        with self.lock:
+            self.queue1.put("destroy") # Put "destroy" in the queue for the pyglet thread.
+            self.queue2.put("stop")  # Put "stop" in the queue for the pyglet thread to read
+
         # Will be read by the pyglet thread to close the window.
         self.root.destroy()
 
 
-def tkinter_app(queue):
+def tkinter_app(queue1, lock):
     """Create the tkinter GUI and run the mainloop. Used to run the GUI in a separate process.
     Parameters
     ----------
@@ -303,7 +320,7 @@ def tkinter_app(queue):
     """
 
     root = tk.Tk() # Create the root window
-    app = NoiseGeneratorApp(root, queue) # Create the NoiseGeneratorApp instance
+    app = NoiseGeneratorApp(root, queue1, lock) # Create the NoiseGeneratorApp instance
     root.protocol("WM_DELETE_WINDOW", app.on_close) # Set the on_close method as the callback for the close button
     root.mainloop() # Run the mainloop
 
@@ -312,3 +329,47 @@ def tkinter_app(queue):
 # For debugging purposes:
 # if __name__ == "__main__":
 #     tkinter_app(Queue())
+
+def load_noise_info(file):
+    """
+    Load the noise .h5 file and return the noise data, width, height, frames and frame rate.
+    Parameters
+    ----------
+    file : str
+        Path to the noise file.
+    Returns
+    -------
+    noise : np.ndarray
+        Noise data.
+    width : int
+        Width of the noise.
+    height : int
+        Height of the noise.
+    frames : int
+        Number of frames in the noise.
+    frame_rate : int
+        Frame rate of the noise.
+
+    """
+    with h5py.File(f"stimuli/{file}", 'r') as f:
+        size = f['Noise'][:].shape
+        frame_rate = f['Frame_Rate'][()]
+
+    width = size[2]
+    height = size[1]
+    frames = size[0]
+
+    return width, height, frames, frame_rate
+
+
+def schedule_frames(frames, frame_rate):
+    current_time = time.perf_counter()
+
+    fps = frame_rate
+    frame_duration = 1 / fps
+
+    s_frames = np.linspace(current_time+5, current_time + frames * frame_duration+5, frames)
+    return s_frames
+
+
+
