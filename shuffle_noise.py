@@ -17,8 +17,9 @@ def shuffle_pattern(pattern, checker_size):
         The shuffled pattern.
 
     """
-    max_shift = checker_size // 2  # Calculate maximum shift relative to checker size
+    max_shift = int(checker_size - checker_size/4)  # Calculate maximum shift relative to checker size
     shifts = np.arange(0, max_shift + 1, checker_size // 4)  # Get the possible shifts
+
 
     # Generate random shifts for x and y from the calculated shifts
     x_shift = np.random.choice(shifts)
