@@ -6,13 +6,13 @@ authors = ["marvinseifert <40001645+marvinseifert@users.noreply.github.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "3.10.10"
+python = "^3.10"
 pygame = "^2.5.1"
 pyserial = "^3.5"
 numpy = "^1.25.2"
 h5py = "^3.9.0"
-moderngl = "^5.8.2"
-moderngl-window = "^2.4.4"
+moderngl = "^5.9.0"
+moderngl-window = "^2.4.5"
 opencv-python = "^4.8.1.78"
 blosc = "^1.11.1"
 hdf5plugin = "^4.2.0"
