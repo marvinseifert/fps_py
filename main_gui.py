@@ -13,7 +13,7 @@ import numpy as np
 class NoiseGeneratorApp:
     """Class for the Noise Generator GUI."""
 
-    def __init__(self, root, queue1, lock):
+    def __init__(self, root, queue1, lock, ard_queue, ard_lock):
         """
         Parameters
         ----------
@@ -25,6 +25,8 @@ class NoiseGeneratorApp:
         """
         self.lock = lock
         self.queue1 = queue1
+        self.ard_queue = ard_queue
+        self.ard_lock = ard_lock
         self.root = root
         self.root.title("Noise Generator GUI")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -51,6 +53,7 @@ class NoiseGeneratorApp:
         self.loop = tk.StringVar(value="") # variable for loop checkbox
         self.colours = tk.StringVar(value="") # variable for colours checkbox
         self.colour_change = tk.StringVar(value="") # variable for colour change checkbox
+        self.arduino_cmd_var = tk.StringVar(value="") # variable for arduino command
 
         self._initialize_ui() # initialize the UI
 
@@ -62,6 +65,10 @@ class NoiseGeneratorApp:
         self.noise_name_entry = ttk.Entry(self.left_frame, textvariable=self.noise_name_var)
         self.noise_name_entry.insert(0, "Noise_name")
         self.noise_name_entry.grid(row=4, column=0, padx=10, pady=5)
+
+        self.arduino_command = ttk.Entry(self.left_frame, textvariable=self.arduino_cmd_var)
+        self.arduino_command.insert(0, "Arduino Command")
+        self.arduino_command.grid(row=8, column=0, padx=10, pady=5)
 
         # Variables and labels for the left frame entries
         variables = [self.checkerboard_var, self.window_size_var, self.noise_frequency_var, self.noise_duration_var]
@@ -75,6 +82,11 @@ class NoiseGeneratorApp:
         self.generate_noise_button = ttk.Button(self.left_frame, text="generate noise", command=self.on_generate_noise)
         self.generate_noise_button.grid(row=4, column=1, pady=5, padx=0)
 
+        self.send_arduino_cmd = ttk.Button(self.left_frame, text="send to arduino", command=self.on_send_arduino_cmd)
+        self.send_arduino_cmd.grid(row=8, column=1, pady=5, padx=0)
+
+        self.stop_arduino_cmd = ttk.Button(self.left_frame, text="stop arduino", command=self.stop_arduino)
+        self.stop_arduino_cmd.grid(row=9, column=1, pady=5, padx=0)
         # Size label
         self.size_label = ttk.Label(self.left_frame, text="")
         self.size_label.grid(row=5, column=1, padx=10, pady=5)
@@ -300,19 +312,40 @@ class NoiseGeneratorApp:
         except ValueError:
             pass
 
+    def on_send_arduino_cmd(self, *args):
+        """Send the arduino command to the arduino."""
+        with self.lock:
+            self.queue1.put("white_screen")
+        with self.ard_lock:
+            self.ard_queue.put(self.arduino_cmd_var.get())
+
+    def stop_arduino(self, *args):
+        """Stop the arduino."""
+        with self.ard_lock:
+            self.ard_queue.put("b")
+        with self.lock:
+            self.queue1.put("stop")
+
+
     def on_close(self):
         """Called when the window is closed."""
         # Can add cleanup here if needed
+        # Disconnect Arduino
+        with self.ard_lock:
+            self.ard_queue.put("destroy")
         with self.lock:
             self.queue1.put("stop")  # Put "stop" in the queue for the pyglet thread to read
             self.queue1.put("destroy") # Put "destroy" in the queue for the pyglet thread.
+
 
 
         # Will be read by the pyglet thread to close the window.
         self.root.destroy()
 
 
-def tkinter_app(queue1, lock):
+
+
+def tkinter_app(queue1, lock, ard_queue, ard_lock):
     """Create the tkinter GUI and run the mainloop. Used to run the GUI in a separate process.
     Parameters
     ----------
@@ -321,7 +354,7 @@ def tkinter_app(queue1, lock):
     """
 
     root = tk.Tk() # Create the root window
-    app = NoiseGeneratorApp(root, queue1, lock) # Create the NoiseGeneratorApp instance
+    app = NoiseGeneratorApp(root, queue1, lock, ard_queue, ard_lock) # Create the NoiseGeneratorApp instance
     root.protocol("WM_DELETE_WINDOW", app.on_close) # Set the on_close method as the callback for the close button
     root.mainloop() # Run the mainloop
 
@@ -368,7 +401,7 @@ def schedule_frames(frames, frame_rate):
 
     fps = frame_rate
     frame_duration = 1 / fps
-    buffer = 20
+    buffer = 5
     s_frames = np.linspace(current_time+buffer, current_time + frames * frame_duration+buffer, frames+1)
     return s_frames
 

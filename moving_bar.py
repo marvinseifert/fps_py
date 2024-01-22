@@ -194,7 +194,7 @@ stimulus = generate_stimulus(nt, bar_width)
 # %%
 stimulus[stimulus==1] = 255
 # %%
-with h5py.File("stimuli/moving_bar.h5", 'w') as f:
+with h5py.File("stimuli/moving_bar_small.h5", 'w') as f:
     f.create_dataset('Noise', data=stimulus, dtype="uint8",
                      compression=hdf5plugin.Blosc(cname='blosclz', clevel=9, shuffle=hdf5plugin.Blosc.NOSHUFFLE))
     f.create_dataset(name="Frame_Rate", data=60, dtype="uint8")
