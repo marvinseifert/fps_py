@@ -20,8 +20,6 @@ class Presenter:
 
     """
 
-    delay = 10
-
     def __init__(
         self,
         process_idx,
@@ -33,6 +31,7 @@ class Presenter:
         ard_queue,
         ard_lock,
         mode,
+        delay=10,
     ):
         """
         Parameters
@@ -65,6 +64,8 @@ class Presenter:
         self.ard_queue = ard_queue
         self.ard_lock = ard_lock
         self.nr_followers = len(config_dict["windows"].keys()) - 1
+        self.c_channels = config_dict["windows"][str(self.process_idx)]["channels"]
+        self.delay = delay
         settings.WINDOW[
             "class"
         ] = "moderngl_window.context.pyglet.Window"  # using a pyglet window
@@ -193,7 +194,7 @@ class Presenter:
 
         return file, loops, colours, change_logic, s_frames
 
-    def process_colours(self, colours, change_logic, frames):
+    def process_arduino_colours(self, colours, change_logic, frames):
         """
         Processes the colours and calculates the necessary repeats.
 
@@ -233,25 +234,32 @@ class Presenter:
             A tuple containing the loaded patterns as a 3D array, the width and height of each pattern,
             the number of frames, and the desired frames per second (fps).
         """
-        all_patterns_3d, width, height, frames, desired_fps = load_3d_patterns(
-            file
+        (
+            all_patterns_3d,
+            width,
+            height,
+            frames,
+            desired_fps,
+            nr_colours,
+        ) = load_3d_patterns(
+            file, channels=self.c_channels
         )  # Load the noise data
 
         # Establish the texture for each noise frame
         patterns = [
             self.window.ctx.texture(
                 (width, height),
-                1,
-                all_patterns_3d[i, :, :].tobytes(),
+                nr_colours,
+                all_patterns_3d[i, :].tobytes(),
                 samples=0,
                 alignment=1,
             )
             for i in range(frames)
         ]
 
-        return all_patterns_3d, width, height, frames, desired_fps, patterns
+        return all_patterns_3d, width, height, frames, desired_fps, patterns, nr_colours
 
-    def setup_shader_program(self):
+    def setup_shader_program(self, nr_colours=1):
         """
         Initializes the shader program using vertex and fragment shaders.
 
@@ -263,8 +271,12 @@ class Presenter:
         # Load and compile vertex and fragment shaders
         with open("vertex_shader.glsl", "r") as vertex_file:
             vertex_shader_source = vertex_file.read()
-        with open("fragment_shader.glsl", "r") as fragment_file:
-            fragment_shader_source = fragment_file.read()
+        if nr_colours == 1:
+            with open("fragment_shader.glsl", "r") as fragment_file:
+                fragment_shader_source = fragment_file.read()
+        else:
+            with open("fragment_shader_colour.glsl", "r") as fragment_file:
+                fragment_shader_source = fragment_file.read()
 
         # Create and return the shader program
         program = self.window.ctx.program(
@@ -382,7 +394,15 @@ class Presenter:
     import time
 
     def presentation_loop(
-        self, pattern_indices, s_frames, colours, change_logic, patterns, program, vao
+        self,
+        pattern_indices,
+        s_frames,
+        nr_colours,
+        arduino_colours,
+        change_logic,
+        patterns,
+        program,
+        vao,
     ):
         """
         Main loop for presenting the noise.
@@ -393,7 +413,7 @@ class Presenter:
             List of indices indicating the order in which to present the patterns.
         s_frames : list
             List of timestamps for when each frame should start.
-        colours : list
+        arduino_colours : list
             List of colours to be used for each frame.
         change_logic : int
             Logic to determine when to change the colour.
@@ -421,15 +441,22 @@ class Presenter:
 
             # Handle colour change logic
             if current_pattern_index % change_logic == 0:
-                c = colours[current_pattern_index // change_logic % len(colours)]
+                c = arduino_colours[
+                    current_pattern_index // change_logic % len(arduino_colours)
+                ]
                 self.send_colour(c)  # Custom function to send colour to Arduino
 
             # Clear the window and render the noise
             self.window.ctx.clear(0, 0, 0)
             patterns[current_pattern_index].use(location=0)
-            program[
-                "pattern"
-            ].value = 0  # Assuming 'pattern' is the uniform name in shader
+            if nr_colours > 1:
+                program[
+                    "pattern"
+                ].red = 0  # Assuming 'pattern' is the uniform name in shader
+                program["pattern"].green = 0
+                program["pattern"].blue = 0
+            else:
+                program["pattern"].value = 0
             vao.render(moderngl.TRIANGLES)
 
             # Swap buffers and send trigger signal
@@ -492,11 +519,17 @@ class Presenter:
         """
         # p
         # Get the data according to the noise_dict
-        file, loops, colours, change_logic, s_frames = self.load_and_initialize_data(
-            noise_dict
-        )
+        (
+            file,
+            loops,
+            arduino_colours,
+            change_logic,
+            s_frames,
+        ) = self.load_and_initialize_data(noise_dict)
 
-        colours = self.process_colours(colours, change_logic, len(s_frames))
+        arduino_colours = self.process_arduino_colours(
+            arduino_colours, change_logic, len(s_frames)
+        )
 
         # Load the noise data
         (
@@ -506,21 +539,11 @@ class Presenter:
             frames,
             desired_fps,
             patterns,
+            nr_colours,
         ) = self.load_noise_data(file)
 
-        # Establish the texture for each noise frame
-        patterns = [
-            self.window.ctx.texture(
-                (width, height),
-                1,
-                all_patterns_3d[i, :, :].tobytes(),
-                samples=0,
-                alignment=1,
-            )
-            for i in range(frames)
-        ]
         # Establish the shader program for presenting the noise
-        program = self.setup_shader_program()
+        program = self.setup_shader_program(nr_colours)
 
         # Calculate the aspect ratio of the window and the noise to adjust the noise size
         scale_x, scale_y, quad = self.calculate_scaling(width, height)
@@ -543,7 +566,14 @@ class Presenter:
 
         # Start the presentation loop
         self.presentation_loop(
-            pattern_indices, s_frames, colours, change_logic, patterns, program, vao
+            pattern_indices,
+            s_frames,
+            nr_colours,
+            arduino_colours,
+            change_logic,
+            patterns,
+            program,
+            vao,
         )
 
         # Clean up and finalize the presentation
@@ -585,7 +615,7 @@ def write_log(noise_dict):
         writer.writerow([file, loops, colours, change_logic, time.strftime("%H:%M:%S")])
 
 
-def load_3d_patterns(file):
+def load_3d_patterns(file, channels=None):
     """
     Load the noise .h5 file and return the noise data, width, height, frames and frame rate.
     Parameters
@@ -611,13 +641,24 @@ def load_3d_patterns(file):
         frame_rate = f["Frame_Rate"][()]
 
     size = noise.shape
-    print(noise.dtype)
     width = size[2]
     height = size[1]
     frames = size[0]
+    try:
+        colours = size[3]
+    except IndexError:
+        colours = 1
+
+    if (colours > 1) & (channels is not None):
+        try:
+            noise = noise[:, :, :, channels]
+            colours = len(channels)
+        except IndexError:
+            print("more channels requested than available in the noise file")
+            raise
     # noise = np.asfortranarray(noise)
 
-    return noise, width, height, frames, frame_rate
+    return noise, width, height, frames, frame_rate, colours
 
 
 def get_noise_info(file):
@@ -640,7 +681,7 @@ def pyglet_app_lead(
     lock,
     ard_queue,
     ard_lock,
-    mode="lead",
+    delay=10,
 ):
     """
     Start the pyglet app. This function is used to spawn the pyglet app in a separate process.
@@ -671,7 +712,8 @@ def pyglet_app_lead(
         lock,
         ard_queue,
         ard_lock,
-        mode,
+        mode="lead",
+        delay=delay,
     )
     Noise.run_empty()  # Establish the empty loop
 
@@ -685,6 +727,7 @@ def pyglet_app_follow(
     lock,
     ard_queue,
     ard_lock,
+    delay=10,
 ):
     """
     Start the pyglet app. This function is used to spawn the pyglet app in a separate process.
@@ -716,6 +759,7 @@ def pyglet_app_follow(
         ard_queue,
         ard_lock,
         mode="follow",
+        delay=delay,
     )
     Noise.run_empty()  # Establish the empty loop
 

@@ -11,26 +11,28 @@ import numpy as np
 
 windows = {
     "1": {
-        "y_shift": -100,
+        "y_shift": -500,
         "x_shift": 2560,
         "window_size": (800, 800),
         "fullscreen": False,
         "style": "borderless",
+        "channels": np.array([0, 0, 1]),
     },
     "2": {
-        "y_shift": 200,
-        "x_shift": 2600,
+        "y_shift": 0,
+        "x_shift": 2560,
         "window_size": (800, 800),
         "fullscreen": False,
-        "style": "borderless",
+        "style": "transparent",
+        "channels": np.array([0, 0, 1]),
     },
-    "3": {
-        "y_shift": 600,
-        "x_shift": 2600,
-        "window_size": (200, 200),
-        "fullscreen": False,
-        "style": "borderless",
-    },
+    # "3": {
+    #     "y_shift": 600,
+    #     "x_shift": 2600,
+    #     "window_size": (200, 200),
+    #     "fullscreen": False,
+    #     "style": "borderless",
+    # },
     # "4": {
     #     "y_shift": 800,
     #     "x_shift": 2600,
@@ -47,6 +49,7 @@ nr_windows = len(windows)
 
 arduino_port = "COM3"
 arduino_baud_rate = 9600
+presentation_delay = 20  # Delay between loading of the stimulus to the start of the presentation in seconds
 
 
 # Start the GUI and the noise presentation in separate processes
@@ -74,6 +77,7 @@ if __name__ == "__main__":
             queue_lock,
             arduino_queue,
             arduino_lock,
+            presentation_delay,
         ),
     )  # Start the pyglet app
     # Arduino process
@@ -99,6 +103,7 @@ if __name__ == "__main__":
                 queue_lock,
                 arduino_queue,
                 arduino_lock,
+                presentation_delay,
             ),
         )
         p.start()
