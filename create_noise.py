@@ -128,6 +128,7 @@ def generate_and_store_video(
 
     # Release the VideoWriter
     out.release()
+    # Bla
 
 
 def generate_multicolor_checkerboard_pattern(
