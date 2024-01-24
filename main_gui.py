@@ -9,10 +9,11 @@ import time
 import numpy as np
 
 
+
 class NoiseGeneratorApp:
     """Class for the Noise Generator GUI."""
 
-    def __init__(self, root, queue1, lock, ard_queue, ard_lock, nr_processes=1):
+    def __init__(self, root, queue1, lock, ard_queue, ard_lock):
         """
         Parameters
         ----------
@@ -27,7 +28,6 @@ class NoiseGeneratorApp:
         self.ard_queue = ard_queue
         self.ard_lock = ard_lock
         self.root = root
-        self.nr_processes = nr_processes
         self.root.title("Noise Generator GUI")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.geometry("600x500")
@@ -42,121 +42,73 @@ class NoiseGeneratorApp:
         # Variables to store the values of the input fields
         standard_values = ["5", "1000,1000", "20", "5.0"]
         # Variables to store the values of the input fields
-        self.checkerboard_var = tk.StringVar(
-            value=standard_values[0]
-        )  # variable for checkerboard size
-        self.window_size_var = tk.StringVar(
-            value=standard_values[1]
-        )  # variable for noise size
-        self.noise_frequency_var = tk.StringVar(
-            value=standard_values[2]
-        )  # variable for noise frequency
-        self.noise_duration_var = tk.StringVar(
-            value=standard_values[3]
-        )  # variable for noise duration
-        self.noise_name_var = tk.StringVar()  # variable for noise name
-        self.selected_file_info_var = tk.StringVar(
-            value=""
-        )  # variable for selected file info
-        self.shuffle = tk.IntVar()  # variable for shuffle checkbox
-        self.style = ttk.Style()  # style for ttk widgets
-        self.loop = tk.StringVar(value="")  # variable for loop checkbox
-        self.colours = tk.StringVar(value="")  # variable for colours checkbox
-        self.colour_change = tk.StringVar(
-            value=""
-        )  # variable for colour change checkbox
-        self.arduino_cmd_var = tk.StringVar(value="")  # variable for arduino command
+        self.checkerboard_var = tk.StringVar(value=standard_values[0]) # variable for checkerboard size
+        self.window_size_var = tk.StringVar(value=standard_values[1]) # variable for noise size
+        self.noise_frequency_var = tk.StringVar(value=standard_values[2]) # variable for noise frequency
+        self.noise_duration_var = tk.StringVar(value=standard_values[3]) # variable for noise duration
+        self.noise_name_var = tk.StringVar() # variable for noise name
+        self.selected_file_info_var = tk.StringVar(value="") # variable for selected file info
+        self.shuffle = tk.IntVar() # variable for shuffle checkbox
+        self.style = ttk.Style() # style for ttk widgets
+        self.loop = tk.StringVar(value="") # variable for loop checkbox
+        self.colours = tk.StringVar(value="") # variable for colours checkbox
+        self.colour_change = tk.StringVar(value="") # variable for colour change checkbox
+        self.arduino_cmd_var = tk.StringVar(value="") # variable for arduino command
 
-        self._initialize_ui()  # initialize the UI
+        self._initialize_ui() # initialize the UI
 
     def _initialize_ui(self):
         """Initialize the UI."""
 
         # 1. Widgets for the left frame
         # Noise name entry
-        self.noise_name_entry = ttk.Entry(
-            self.left_frame, textvariable=self.noise_name_var
-        )
+        self.noise_name_entry = ttk.Entry(self.left_frame, textvariable=self.noise_name_var)
         self.noise_name_entry.insert(0, "Noise_name")
         self.noise_name_entry.grid(row=4, column=0, padx=10, pady=5)
 
-        self.arduino_command = ttk.Entry(
-            self.left_frame, textvariable=self.arduino_cmd_var
-        )
+        self.arduino_command = ttk.Entry(self.left_frame, textvariable=self.arduino_cmd_var)
         self.arduino_command.insert(0, "Arduino Command")
         self.arduino_command.grid(row=8, column=0, padx=10, pady=5)
 
         # Variables and labels for the left frame entries
-        variables = [
-            self.checkerboard_var,
-            self.window_size_var,
-            self.noise_frequency_var,
-            self.noise_duration_var,
-        ]
-        labels = [
-            "checkerboard size",
-            "window size",
-            "noise frequency",
-            "noise duration",
-        ]
+        variables = [self.checkerboard_var, self.window_size_var, self.noise_frequency_var, self.noise_duration_var]
+        labels = ["checkerboard size", "window size", "noise frequency", "noise duration"]
 
         for i, (label, var) in enumerate(zip(labels, variables)):
-            ttk.Label(self.left_frame, text=label).grid(
-                row=i, column=0, sticky=tk.W, pady=5
-            )
+            ttk.Label(self.left_frame, text=label).grid(row=i, column=0, sticky=tk.W, pady=5)
             ttk.Entry(self.left_frame, textvariable=var).grid(row=i, column=1, pady=5)
 
         # Generate noise button
-        self.generate_noise_button = ttk.Button(
-            self.left_frame, text="generate noise", command=self.on_generate_noise
-        )
+        self.generate_noise_button = ttk.Button(self.left_frame, text="generate noise", command=self.on_generate_noise)
         self.generate_noise_button.grid(row=4, column=1, pady=5, padx=0)
 
-        self.send_arduino_cmd = ttk.Button(
-            self.left_frame, text="send to arduino", command=self.on_send_arduino_cmd
-        )
+        self.send_arduino_cmd = ttk.Button(self.left_frame, text="send to arduino", command=self.on_send_arduino_cmd)
         self.send_arduino_cmd.grid(row=8, column=1, pady=5, padx=0)
 
-        self.stop_arduino_cmd = ttk.Button(
-            self.left_frame, text="stop arduino", command=self.stop_arduino
-        )
+        self.stop_arduino_cmd = ttk.Button(self.left_frame, text="stop arduino", command=self.stop_arduino)
         self.stop_arduino_cmd.grid(row=9, column=1, pady=5, padx=0)
         # Size label
         self.size_label = ttk.Label(self.left_frame, text="")
         self.size_label.grid(row=5, column=1, padx=10, pady=5)
 
         # Shuffle checkbox
-        self.shuffle_box = ttk.Checkbutton(
-            self.left_frame,
-            text="shuffle",
-            variable=self.shuffle,
-            onvalue=1,
-            offvalue=0,
-        )
+        self.shuffle_box = ttk.Checkbutton(self.left_frame, text='shuffle', variable=self.shuffle, onvalue=1,
+                                           offvalue=0)
         self.shuffle_box.grid(row=5, column=0, pady=0, padx=0)
 
         # 2. Widgets for the right frame
         self.root.grid_rowconfigure(0, weight=1)
-        self.right_frame.grid_columnconfigure(
-            0, weight=1
-        )  # This makes the listbox expand horizontally
+        self.right_frame.grid_columnconfigure(0, weight=1)  # This makes the listbox expand horizontally
         self.right_frame.grid_columnconfigure(1, weight=0)
 
         # Scrollbar for right frame
         self.scrollbar = ttk.Scrollbar(self.right_frame, orient="vertical")
-        self.scrollbar.grid(row=3, column=1, sticky="ns", padx=0)
+        self.scrollbar.grid(row=3, column=1, sticky='ns', padx=0)
 
         # File listbox
-        self.file_listbox = tk.Listbox(
-            self.right_frame,
-            height=25,
-            width=30,
-            selectmode=tk.SINGLE,
-            yscrollcommand=self.scrollbar.set,
-        )
-        self.file_listbox.grid(
-            row=4, column=0, columnspan=1, pady=5, sticky=tk.N + tk.S + tk.E + tk.W
-        )
+        self.file_listbox = tk.Listbox(self.right_frame, height=25, width=30, selectmode=tk.SINGLE,
+                                       yscrollcommand=self.scrollbar.set)
+        self.file_listbox.grid(row=4, column=0, columnspan=1, pady=5, sticky=tk.N + tk.S + tk.E + tk.W)
         self.scrollbar.config(command=self.file_listbox.yview)
 
         # Loop Frame
@@ -182,46 +134,32 @@ class NoiseGeneratorApp:
         colour_frame = ttk.Frame(self.right_frame)
         colour_frame.grid(row=2, column=0, columnspan=2, pady=5, sticky=tk.W)
 
-        self.colour_change_label = ttk.Label(
-            colour_frame, text="change_every:", width=13
-        )
+        self.colour_change_label = ttk.Label(colour_frame, text="change_every:", width=13)
         self.colour_change_label.pack(side=tk.LEFT, padx=2)
 
-        self.colour_change = ttk.Entry(
-            colour_frame, textvariable=self.colour_change, width=10
-        )
+        self.colour_change = ttk.Entry(colour_frame, textvariable=self.colour_change, width=10)
         self.colour_change.pack(side=tk.LEFT, padx=5)
         self.colour_change.insert(0, "100")
 
         self.colour_change_frames = ttk.Label(colour_frame, text="Frames.", width=12)
         self.colour_change_frames.pack(side=tk.LEFT, padx=2)
 
+
         # Button frame for right frame
         button_frame = ttk.Frame(self.right_frame)
         button_frame.grid(row=0, column=0, columnspan=2, pady=5, sticky=tk.W)
 
-        self.play_noise = ttk.Button(
-            button_frame,
-            text="play noise",
-            command=self.on_play_noise,
-            style="Play.TButton",
-        )
+        self.play_noise = ttk.Button(button_frame, text="play noise", command=self.on_play_noise, style='Play.TButton')
         self.play_noise.pack(side=tk.LEFT, padx=5)
 
-        self.stop_noise = ttk.Button(
-            button_frame, text="stop noise", command=self.on_stop_noise
-        )
+        self.stop_noise = ttk.Button(button_frame, text="stop noise", command=self.on_stop_noise)
         self.stop_noise.pack(side=tk.LEFT, padx=5)
 
-        self.refresh_button = ttk.Button(
-            button_frame, text="Refresh", command=self.refresh_file_list
-        )
+        self.refresh_button = ttk.Button(button_frame, text="Refresh", command=self.refresh_file_list)
         self.refresh_button.pack(side=tk.LEFT, padx=5)
 
         # Selected file info label
-        self.selected_file_info_label = ttk.Label(
-            self.right_frame, textvariable=self.selected_file_info_var, width=40
-        )
+        self.selected_file_info_label = ttk.Label(self.right_frame, textvariable=self.selected_file_info_var, width=40)
         self.selected_file_info_label.grid(row=3, column=0, pady=5, sticky=tk.E)
 
         # 3. Function calls
@@ -230,14 +168,14 @@ class NoiseGeneratorApp:
         self.window_size_var.trace_add("write", self.compute_size)
         self.noise_frequency_var.trace_add("write", self.compute_size)
         self.noise_duration_var.trace_add("write", self.compute_size)
-        self.file_listbox.bind("<<ListboxSelect>>", self.on_file_select)
+        self.file_listbox.bind('<<ListboxSelect>>', self.on_file_select)
         self.compute_size()  # Call compute_size initially to set the label text
 
     def on_generate_noise(self):
         """Generate noise and save it to a file."""
 
-        self.generate_noise_button.config(text="Generating...")  # change button text
-        self.root.update()  # update the UI
+        self.generate_noise_button.config(text="Generating...") # change button text
+        self.root.update() # update the UI
 
         # Extract values and convert to appropriate data types
         checkerboard_size = int(self.checkerboard_var.get())
@@ -249,12 +187,11 @@ class NoiseGeneratorApp:
         # Validate the noise name's suffix
         file_name_path = Path(file_name)
         if file_name_path.suffix and file_name_path.suffix != ".h5":
-            print(
-                f"Invalid suffix '{file_name_path.suffix}' provided. Using '.h5' instead."
-            )
+            print(f"Invalid suffix '{file_name_path.suffix}' provided. Using '.h5' instead.")
             file_name = file_name_path.stem  # Get the filename without any suffix
         file_name += ".h5"
         complete_file_name = Path("stimuli", file_name)
+
 
         # Calculate number of frames needed
         frames = int(noise_duration * 60 * noise_frequency)
@@ -263,27 +200,16 @@ class NoiseGeneratorApp:
 
         # Call the function to generate the noise
         if self.shuffle.get() == 0:
-            create_noise.generate_and_store_3d_array(
-                frames,
-                checkerboard_size,
-                width,
-                height,
-                noise_frequency,
-                name=complete_file_name,
-            )
+            create_noise.generate_and_store_3d_array(frames, checkerboard_size, width, height,noise_frequency, name=complete_file_name)
         else:
-            shuffle_noise.generate_and_store_3d_array(
-                frames,
-                checkerboard_size,
-                width,
-                height,
-                noise_frequency,
-                name=complete_file_name,
-            )
+            shuffle_noise.generate_and_store_3d_array(frames, checkerboard_size, width, height,noise_frequency, name=complete_file_name)
         # Update the list of files
         self.refresh_file_list()
         # Reset the button text
         self.generate_noise_button.config(text="Generate Noise")
+
+
+
 
     def on_play_noise(self):
         """Play the selected noise file."""
@@ -296,26 +222,19 @@ class NoiseGeneratorApp:
         s_frames = schedule_frames(frames, frame_rate)
         print(s_frames)
 
-        queue_data = {
-            "file": noise_name,
-            "loops": int(self.loop_entry.get()),
-            "colours": self.colours.get(),
-            "change_logic": int(self.colour_change.get()),
-            "s_frames": s_frames,
-        }
+        queue_data = {"file": noise_name, "loops": int(self.loop_entry.get()), "colours": self.colours.get(),
+                      "change_logic": int(self.colour_change.get()), "s_frames": s_frames}
         with self.lock:
-            for _ in range(self.nr_processes):
-                self.queue1.put(
-                    queue_data
-                )  # Put the noise name in the queue for the pyglet thread to read
+            for _ in range(1):
+                self.queue1.put(queue_data) # Put the noise name in the queue for the pyglet thread to read
+
 
     def on_stop_noise(self):
         """Stop the noise playback."""
         with self.lock:
-            for _ in range(self.nr_processes):
-                self.queue1.put(
-                    "stop"
-                )  # Put "stop" in the queue for the pyglet thread to read
+            for _ in range(1):
+                self.queue1.put("stop") # Put "stop" in the queue for the pyglet thread to read
+
 
     def refresh_file_list(self):
         """Refresh the list of .h5py files in the stimuli directory."""
@@ -323,7 +242,7 @@ class NoiseGeneratorApp:
         stimuli_dir = Path("stimuli")
 
         if stimuli_dir.exists() and stimuli_dir.is_dir():
-            files = [f.name for f in stimuli_dir.iterdir() if f.suffix == ".h5"]
+            files = [f.name for f in stimuli_dir.iterdir() if f.suffix == '.h5']
             self.file_listbox.delete(0, tk.END)  # Clear the listbox
             for file in files:
                 self.file_listbox.insert(tk.END, file)
@@ -341,7 +260,7 @@ class NoiseGeneratorApp:
 
         """
 
-        index = self.file_listbox.curselection()  # Get the index of the selected item
+        index = self.file_listbox.curselection() # Get the index of the selected item
         if index:
             try:
                 file_name = self.file_listbox.get(index[0])
@@ -353,24 +272,18 @@ class NoiseGeneratorApp:
                     checkerboard_size = f["Checkerboard_Size"][()]
                     shuffle = f["Shuffle"][()]
                 duration = noise_size[0] / fps / 60
-                self.selected_file_info_var.set(
-                    f"size: {checkerboard_size}, fps: {fps}, time: {duration:.2f} min, shuffle: {shuffle}"
-                )
-                self.style.configure(
-                    "Play.TButton", background="green"
-                )  # Change the button color to green
+                self.selected_file_info_var.set(f"size: {checkerboard_size}, fps: {fps}, time: {duration:.2f} min, shuffle: {shuffle}")
+                self.style.configure('Play.TButton', background='green') # Change the button color to green
 
             except KeyError:
                 # This could happen if the file is not a valid noise file
-                self.style.configure(
-                    "Play.TButton", background="SystemButtonFace"
-                )  # Change the button color back to default
+                self.style.configure('Play.TButton', background='SystemButtonFace') # Change the button color back to default
                 self.selected_file_info_var.set("")
         else:
-            self.style.configure(
-                "Play.TButton", background="SystemButtonFace"
-            )  # Change the button color back to default
+
+            self.style.configure('Play.TButton', background='SystemButtonFace') # Change the button color back to default
             self.selected_file_info_var.set("")
+
 
     def compute_size(self, *args):
         """Compute the estimated size of the noise file and update the label text."""
@@ -385,19 +298,17 @@ class NoiseGeneratorApp:
             # Do some unit conversions to make the size more readable:
             if size_in_bytes < 1024:
                 size_str = f"{size_in_bytes} bytes"
-            elif size_in_bytes < 1024**2:
+            elif size_in_bytes < 1024 ** 2:
                 size_in_kb = size_in_bytes / 1024
                 size_str = f"{size_in_kb:.2f} KB"
-            elif size_in_bytes < 1024**3:
-                size_in_mb = size_in_bytes / (1024**2)
+            elif size_in_bytes < 1024 ** 3:
+                size_in_mb = size_in_bytes / (1024 ** 2)
                 size_str = f"{size_in_mb:.2f} MB"
             else:
-                size_in_gb = size_in_bytes / (1024**3)
+                size_in_gb = size_in_bytes / (1024 ** 3)
                 size_str = f"{size_in_gb:.2f} GB"
 
-            self.size_label.config(
-                text=f"Estimated size: {size_str}"
-            )  # Update the label text
+            self.size_label.config(text=f"Estimated size: {size_str}") # Update the label text
         except ValueError:
             pass
 
@@ -415,6 +326,7 @@ class NoiseGeneratorApp:
         with self.lock:
             self.queue1.put("stop")
 
+
     def on_close(self):
         """Called when the window is closed."""
         # Can add cleanup here if needed
@@ -422,19 +334,18 @@ class NoiseGeneratorApp:
         with self.ard_lock:
             self.ard_queue.put("destroy")
         with self.lock:
-            for _ in range(self.nr_processes):
-                self.queue1.put(
-                    "stop"
-                )  # Put "stop" in the queue for the pyglet thread to read
-                self.queue1.put(
-                    "destroy"
-                )  # Put "destroy" in the queue for the pyglet thread.
+            self.queue1.put("stop")  # Put "stop" in the queue for the pyglet thread to read
+            self.queue1.put("destroy") # Put "destroy" in the queue for the pyglet thread.
+
+
 
         # Will be read by the pyglet thread to close the window.
         self.root.destroy()
 
 
-def tkinter_app(queue1, lock, ard_queue, ard_lock, nr_processes):
+
+
+def tkinter_app(queue1, lock, ard_queue, ard_lock):
     """Create the tkinter GUI and run the mainloop. Used to run the GUI in a separate process.
     Parameters
     ----------
@@ -442,22 +353,16 @@ def tkinter_app(queue1, lock, ard_queue, ard_lock, nr_processes):
         The queue used to communicate with the pyglet thread.
     """
 
-    root = tk.Tk()  # Create the root window
-    app = NoiseGeneratorApp(
-        root, queue1, lock, ard_queue, ard_lock, nr_processes
-    )  # Create the NoiseGeneratorApp instance
-    root.protocol(
-        "WM_DELETE_WINDOW", app.on_close
-    )  # Set the on_close method as the callback for the close button
-    root.mainloop()  # Run the mainloop
-
+    root = tk.Tk() # Create the root window
+    app = NoiseGeneratorApp(root, queue1, lock, ard_queue, ard_lock) # Create the NoiseGeneratorApp instance
+    root.protocol("WM_DELETE_WINDOW", app.on_close) # Set the on_close method as the callback for the close button
+    root.mainloop() # Run the mainloop
 
 # Your compute_size method code here, use self where needed.
 
 # For debugging purposes:
 # if __name__ == "__main__":
 #     tkinter_app(Queue())
-
 
 def load_noise_info(file):
     """
@@ -480,9 +385,9 @@ def load_noise_info(file):
         Frame rate of the noise.
 
     """
-    with h5py.File(f"stimuli/{file}", "r") as f:
-        size = f["Noise"][:].shape
-        frame_rate = f["Frame_Rate"][()]
+    with h5py.File(f"stimuli/{file}", 'r') as f:
+        size = f['Noise'][:].shape
+        frame_rate = f['Frame_Rate'][()]
 
     width = size[2]
     height = size[1]
@@ -497,7 +402,8 @@ def schedule_frames(frames, frame_rate):
     fps = frame_rate
     frame_duration = 1 / fps
     buffer = 5
-    s_frames = np.linspace(
-        current_time, current_time + frames * frame_duration, frames + 1
-    )
+    s_frames = np.linspace(current_time+buffer, current_time + frames * frame_duration+buffer, frames+1)
     return s_frames
+
+
+
