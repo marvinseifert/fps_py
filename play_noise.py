@@ -150,8 +150,9 @@ class Presenter:
 
     def send_trigger(self):
         """Send a trigger signal to the Arduino."""
-        with self.ard_lock:
-            self.ard_queue.put("T")
+        if self.mode == "lead":
+            with self.ard_lock:
+                self.ard_queue.put("T")
 
     def send_colour(self, colour):
         """Send a colour signal to the Arduino."""
@@ -397,6 +398,7 @@ class Presenter:
         self,
         pattern_indices,
         s_frames,
+        end_times,
         nr_colours,
         arduino_colours,
         change_logic,
@@ -435,7 +437,6 @@ class Presenter:
             # Sync frame presentation to the scheduled time
             while time.perf_counter() < s_frames[idx]:
                 pass  # Busy-wait until the scheduled frame time
-            start_time = time.perf_counter()
 
             self.window.use()  # Ensure the correct context is being used
 
@@ -460,22 +461,20 @@ class Presenter:
             vao.render(moderngl.TRIANGLES)
 
             # Swap buffers and send trigger signal
+            start_time = time.perf_counter()
             self.window.swap_buffers()
             self.send_trigger()  # Custom function to send a trigger signal to Arduino
 
             # Monitor and log frame duration, if necessary
-            frame_duration = time.perf_counter() - start_time
-            last_update = time.perf_counter()
-            if frame_duration > (time_per_frame + self.frame_duration):
-                print(
-                    f"WARNING: Frame duration exceeded. Duration: {frame_duration:.2f}s"
-                )
+            end_times[idx] = time.perf_counter() - start_time
 
             # Break the loop if the last frame was presented
             if idx >= len(pattern_indices) - 1:
-                break
+                return end_times
 
-    def cleanup_and_finalize(self, patterns, vbo, vao, noise_dict):
+    def cleanup_and_finalize(
+        self, patterns, vbo, vao, noise_dict, end_times, desired_fps
+    ):
         """
         Cleans up resources, writes logs, and runs final procedures after the presentation.
 
@@ -489,6 +488,10 @@ class Presenter:
             The vertex array object to be released.
         noise_dict : dict
             The dictionary containing noise settings, used for logging purposes.
+        end_times : list
+            List of frame durations.
+        desired_fps : float
+            The desired frames per second for the presentation.
         """
         # Send final colour signal or perform any final communication
         self.send_colour("O")  # Assuming 'O' is the signal for completion
@@ -501,8 +504,22 @@ class Presenter:
         vbo.release()
         vao.release()
 
+        # Check which frames were dropped
+        dropped_frames = np.where(end_times - (1 / desired_fps) > 0)
+        wrong_frame_times = end_times[dropped_frames[0]]
+
+        if len(dropped_frames[0]) == 0:
+            dropped_frames = None
+            wrong_frame_times = None
+
+        # Print the dropped frames
+        print(f"dropped frames (idx): {dropped_frames[0]}")
+        print(f"wrong frame times: {wrong_frame_times}")
+
         # Write log with the noise_dict or any other relevant information
-        write_log(noise_dict)  # Assuming 'write_log' is a function for logging
+        write_log(
+            noise_dict, dropped_frames, wrong_frame_times
+        )  # Assuming 'write_log' is a function for logging
 
         # Run any additional emptying or resetting procedures
         self.run_empty()  # Assuming 'run_empty' is a method for final procedures
@@ -560,14 +577,17 @@ class Presenter:
         # Synchronize the presentation
 
         # Add buffer delay to frames:
-        s_frames = [s + self.delay for s in s_frames]
+        s_frames = s_frames + self.delay
 
-        print(f"stimulus will start in {s_frames[0] - time.perf_counter()} seconds")
-
+        print(
+            f"stimulus will start in {s_frames[0] - time.perf_counter()} seconds, window_idx: {self.process_idx}"
+        )
+        end_times = np.zeros(len(s_frames))
         # Start the presentation loop
-        self.presentation_loop(
+        end_times = self.presentation_loop(
             pattern_indices,
             s_frames,
+            end_times,
             nr_colours,
             arduino_colours,
             change_logic,
@@ -577,7 +597,9 @@ class Presenter:
         )
 
         # Clean up and finalize the presentation
-        self.cleanup_and_finalize(patterns, vbo, vao, noise_dict)
+        self.cleanup_and_finalize(
+            patterns, vbo, vao, noise_dict, end_times, desired_fps
+        )
 
     def play_white(self):
         """
@@ -593,7 +615,7 @@ class Presenter:
         self.window.close()
 
 
-def write_log(noise_dict):
+def write_log(noise_dict, dropped_frames=None, wrong_frame_times=None):
     """
     Write the log file for the noise presentation.
     Parameters
@@ -609,10 +631,34 @@ def write_log(noise_dict):
         f"logs/{file}_{datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S.csv')}"
     )
 
+    if dropped_frames is None:
+        dropped_frames = []
+        wrong_frame_times = []
+
     with open(filename_format, "a", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["noise_file", "loops", "colours", "change_logic", "time"])
-        writer.writerow([file, loops, colours, change_logic, time.strftime("%H:%M:%S")])
+        writer.writerow(
+            [
+                "noise_file",
+                "loops",
+                "colours",
+                "change_logic",
+                "time",
+                "dropped_frames",
+                "wrong_frame_times",
+            ]
+        )
+        writer.writerow(
+            [
+                file,
+                loops,
+                colours,
+                change_logic,
+                time.strftime("%H:%M:%S"),
+                dropped_frames,
+                wrong_frame_times,
+            ]
+        )
 
 
 def load_3d_patterns(file, channels=None):

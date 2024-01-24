@@ -13,32 +13,19 @@ windows = {
     "1": {
         "y_shift": -500,
         "x_shift": 2560,
-        "window_size": (800, 800),
+        "window_size": (400, 400),
         "fullscreen": False,
-        "style": "borderless",
-        "channels": np.array([0, 0, 1]),
+        "style": "transparent",
+        "channels": np.array([0, 1, 1]),
     },
     "2": {
         "y_shift": 0,
-        "x_shift": 2560,
-        "window_size": (800, 800),
+        "x_shift": 2600,
+        "window_size": (400, 400),
         "fullscreen": False,
         "style": "transparent",
-        "channels": np.array([0, 0, 1]),
+        "channels": np.array([2, 2, 3]),
     },
-    # "3": {
-    #     "y_shift": 600,
-    #     "x_shift": 2600,
-    #     "window_size": (200, 200),
-    #     "fullscreen": False,
-    #     "style": "borderless",
-    # },
-    # "4": {
-    #     "y_shift": 800,
-    #     "x_shift": 2600,
-    #     "window_size": (200, 200),
-    #     "fullscreen": False,
-    # },
 }
 
 
@@ -49,7 +36,7 @@ nr_windows = len(windows)
 
 arduino_port = "COM3"
 arduino_baud_rate = 9600
-presentation_delay = 20  # Delay between loading of the stimulus to the start of the presentation in seconds
+presentation_delay = 10  # Delay between loading of the stimulus to the start of the presentation in seconds
 
 
 # Start the GUI and the noise presentation in separate processes
