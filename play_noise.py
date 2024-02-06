@@ -10,6 +10,8 @@ import datetime
 from multiprocessing import RawArray
 from multiprocessing import sharedctypes
 import pyglet
+from arduino import Arduino
+import threading
 
 
 class Presenter:
@@ -98,6 +100,18 @@ class Presenter:
         self.window.init_mgl_context()  # Initialize the moderngl context
         self.stop = False  # Flag for stopping the presentation
         self.window.set_default_viewport()  # Set the viewport to the window size
+
+        if self.mode == "lead":
+            self.arduino = Arduino(
+                port=config_dict["windows"][str(self.process_idx)]["arduino_port"],
+                baud_rate=config_dict["windows"][str(self.process_idx)][
+                    "arduino_baud_rate"
+                ],
+                queue=ard_queue,
+                queue_lock=ard_lock,
+            )
+            self.arduino_thread = threading.Thread(target=self.arduino.loop)
+            self.arduino_thread.start()
 
     def __del__(self):
         with self.ard_lock:

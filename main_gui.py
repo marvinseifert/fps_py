@@ -404,7 +404,8 @@ class NoiseGeneratorApp:
     def on_send_arduino_cmd(self, *args):
         """Send the arduino command to the arduino."""
         with self.lock:
-            self.queue1.put("white_screen")
+            for _ in range(self.nr_processes):
+                self.queue1.put("white_screen")
         with self.ard_lock:
             self.ard_queue.put(self.arduino_cmd_var.get())
 
@@ -413,7 +414,8 @@ class NoiseGeneratorApp:
         with self.ard_lock:
             self.ard_queue.put("b")
         with self.lock:
-            self.queue1.put("stop")
+            for _ in range(self.nr_processes):
+                self.queue1.put("stop")
 
     def on_close(self):
         """Called when the window is closed."""

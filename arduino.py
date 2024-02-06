@@ -1,5 +1,7 @@
 import serial
-def connect_to_arduino(port='COM3', baud_rate=9600):
+
+
+def connect_to_arduino(port="COM3", baud_rate=9600):
     """Establish a connection to the Arduino."""
     try:
         arduino = serial.Serial(port, baud_rate)
@@ -10,7 +12,7 @@ def connect_to_arduino(port='COM3', baud_rate=9600):
 
 
 class Arduino:
-    def __init__(self, port='COM3', baud_rate=9600, queue=None, queue_lock=None):
+    def __init__(self, port="COM3", baud_rate=9600, queue=None, queue_lock=None):
         self.port = port
         self.baud_rate = baud_rate
         self.arduino = None
@@ -18,7 +20,6 @@ class Arduino:
         self.queue_lock = queue_lock
         self.connected = False
         self.connect()
-
 
     def connect(self):
         try:
@@ -29,7 +30,6 @@ class Arduino:
             self.arduino = None
             self.connected = False
             print("Arduino not connected")
-
 
     def send(self, message):
         if self.connected:
@@ -61,7 +61,3 @@ class Arduino:
             else:
                 print("No queue available")
                 break
-
-def run_arduino(port, baud_rate, queue, queue_lock):
-    arduino = Arduino(port=port, baud_rate=baud_rate, queue=queue, queue_lock=queue_lock)
-    arduino.loop()
