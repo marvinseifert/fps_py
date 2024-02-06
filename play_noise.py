@@ -525,10 +525,10 @@ class Presenter:
         if len(dropped_frames[0]) == 0:
             dropped_frames = None
             wrong_frame_times = None
-
-        # Print the dropped frames
-        print(f"dropped frames (idx): {dropped_frames[0]}")
-        print(f"wrong frame times: {wrong_frame_times}")
+        else:
+            # Print the dropped frames
+            print(f"dropped frames (idx): {dropped_frames[0]}")
+            print(f"wrong frame times: {wrong_frame_times}")
 
         # Write log with the noise_dict or any other relevant information
         write_log(
@@ -591,7 +591,12 @@ class Presenter:
         # Synchronize the presentation
 
         # Add buffer delay to frames:
-        s_frames = s_frames + self.delay
+        delay_needed = s_frames[0] - time.perf_counter()
+        if delay_needed > 0:
+            delay = 10
+        else:
+            delay = np.abs(delay_needed) + 10
+        s_frames = s_frames + delay
 
         print(
             f"stimulus will start in {s_frames[0] - time.perf_counter()} seconds, window_idx: {self.process_idx}"
