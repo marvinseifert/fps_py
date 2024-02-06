@@ -5,7 +5,6 @@
 from multiprocessing import Process, Queue, Lock
 from main_gui import tkinter_app
 from play_noise import pyglet_app_lead, pyglet_app_follow
-from arduino import run_arduino
 from multiprocessing import shared_memory
 import numpy as np
 
@@ -17,6 +16,8 @@ windows = {
         "fullscreen": False,
         "style": "transparent",
         "channels": np.array([0, 1, 1]),
+        "arduino_port": "COM3",
+        "arduino_baud_rate": 9600,
     },
     "2": {
         "y_shift": 0,
@@ -34,8 +35,7 @@ config_dict = {"windows": windows, "gl_version": (4, 1), "fps": 60}
 
 nr_windows = len(windows)
 
-arduino_port = "COM3"
-arduino_baud_rate = 9600
+
 presentation_delay = 10  # Delay between loading of the stimulus to the start of the presentation in seconds
 
 
@@ -67,15 +67,10 @@ if __name__ == "__main__":
             presentation_delay,
         ),
     )  # Start the pyglet app
-    # Arduino process
-    pA = Process(
-        target=run_arduino,
-        args=(arduino_port, arduino_baud_rate, arduino_queue, arduino_lock),
-    )
     # Start the processes
     p1.start()
     p2.start()
-    pA.start()
+
     # Presentation follow processes
     follow_processes = []
     for idx in range(2, nr_windows + 1):
@@ -101,7 +96,6 @@ if __name__ == "__main__":
     # Wait for the processes to finish
     p1.join()
     p2.join()
-    pA.join()
     for p in follow_processes:
         p.join()
     # p4.join()
