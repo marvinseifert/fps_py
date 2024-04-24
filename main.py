@@ -5,6 +5,7 @@
 from multiprocessing import Process, Queue, Lock
 from main_gui import tkinter_app
 from play_noise import pyglet_app_lead, pyglet_app_follow
+from arduino import Arduino
 from multiprocessing import shared_memory
 import numpy as np
 
@@ -21,14 +22,27 @@ windows = {
     },
 }
 
+# windows = {
+#     "1": {
+#         "y_shift": 0,
+#         "x_shift": 1920,
+#         "window_size": (400, 400),
+#         "fullscreen": False,
+#         "style": "transparent",
+#         "channels": np.array([0, 0, 0]),
+#         "arduino_port": "COM2",
+#         "arduino_baud_rate": 9600,
+#     },
+# }
 
 # Configuration dictionary for the pyglet app window. Change according to your needs.
 config_dict = {"windows": windows, "gl_version": (4, 1), "fps": 60}
 
 nr_windows = len(windows)
 
-
-presentation_delay = 20  # Delay between loading of the stimulus to the start of the presentation in seconds
+arduino_port = "COM2"
+arduino_baud_rate = 9600
+presentation_delay = 10  # Delay between loading of the stimulus to the start of the presentation in seconds
 
 
 # Start the GUI and the noise presentation in separate processes
@@ -59,10 +73,15 @@ if __name__ == "__main__":
             presentation_delay,
         ),
     )  # Start the pyglet app
+    # Arduino process
+    pA = Process(
+        target=Arduino,
+        args=(arduino_port, arduino_baud_rate, arduino_queue, arduino_lock),
+    )
     # Start the processes
     p1.start()
     p2.start()
-
+    pA.start()
     # Presentation follow processes
     follow_processes = []
     for idx in range(2, nr_windows + 1):
@@ -88,6 +107,7 @@ if __name__ == "__main__":
     # Wait for the processes to finish
     p1.join()
     p2.join()
+    pA.join()
     for p in follow_processes:
         p.join()
     # p4.join()

@@ -184,17 +184,17 @@ def move_bar_optimized(nt, width, direction, speed=2):
 
     return frames
 
-nt = 400  # number of frames per stimulus
-bar_width = 100  # width of the bar
+nt = 600  # number of frames per stimulus
+bar_width = 200  # width of the bar
 
 # %%
 # Generate the stimulus
 stimulus = generate_stimulus(nt, bar_width)
-
+stimulus = stimulus[::2, :,:]
 # %%
 stimulus[stimulus==1] = 255
 # %%
-with h5py.File("stimuli/moving_bar_small.h5", 'w') as f:
+with h5py.File("stimuli/moving_bar.h5", 'w') as f:
     f.create_dataset('Noise', data=stimulus, dtype="uint8",
                      compression=hdf5plugin.Blosc(cname='blosclz', clevel=9, shuffle=hdf5plugin.Blosc.NOSHUFFLE))
     f.create_dataset(name="Frame_Rate", data=60, dtype="uint8")
@@ -203,29 +203,29 @@ with h5py.File("stimuli/moving_bar_small.h5", 'w') as f:
 
 
 # %%
-import cv2
-def save_as_video(frames, filename='output.avi', fps=30):
-    """
-    Save the frames as a video using OpenCV.
+# import cv2
+# def save_as_video(frames, filename='output.avi', fps=30):
+#     """
+#     Save the frames as a video using OpenCV.
+#
+#     Parameters:
+#     - frames: np.array, input frames to be saved as video, shape (num_frames, height, width)
+#     - filename: str, name of the output video file
+#     - fps: int, frames per second for the output video
+#
+#     """
+#     num_frames, height, width = frames.shape
+#     fourcc = cv2.VideoWriter_fourcc(*'XVID')
+#     out = cv2.VideoWriter(filename, fourcc, fps, (width, height), isColor=False)
+#
+#     for i in range(num_frames):
+#         # OpenCV expects uint8 type for images. Scaling and converting the dtype
+#         frame = frames[i]
+#         # Adding an additional channel dimension to make it (height, width, num_channels)
+#         frame = np.expand_dims(frame, axis=-1)
+#         out.write(frame)
+#
+#     out.release()
 
-    Parameters:
-    - frames: np.array, input frames to be saved as video, shape (num_frames, height, width)
-    - filename: str, name of the output video file
-    - fps: int, frames per second for the output video
 
-    """
-    num_frames, height, width = frames.shape
-    fourcc = cv2.VideoWriter_fourcc(*'XVID')
-    out = cv2.VideoWriter(filename, fourcc, fps, (width, height), isColor=False)
-
-    for i in range(num_frames):
-        # OpenCV expects uint8 type for images. Scaling and converting the dtype
-        frame = frames[i]
-        # Adding an additional channel dimension to make it (height, width, num_channels)
-        frame = np.expand_dims(frame, axis=-1)
-        out.write(frame)
-
-    out.release()
-
-
-save_as_video(stimulus, filename="stimuli/moving_bar.avi", fps=60)
+#save_as_video(stimulus, filename="stimuli/moving_bar.avi", fps=60)

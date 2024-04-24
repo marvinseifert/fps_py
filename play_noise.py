@@ -126,7 +126,7 @@ class Presenter:
         while not self.window.is_closing:
             self.window.use()
             # self.window.ctx.clear(0.5, 0.5, 0.5, 1.0)  # Clear the window with a grey background
-            self.window.ctx.clear(0, 0, 0, 1.0)
+            self.window.ctx.clear(0.5, 0.5, 0.5, 1.0)
             self.window.swap_buffers()  # Swap the buffers (update the window content)
             self.communicate()  # Check for commands from the main process (gui)
             time.sleep(0.001)  # Sleep for 1 ms to avoid busy waiting
@@ -144,14 +144,15 @@ class Presenter:
         if command:
             if type(command) == dict:
                 self.play_noise(command)
+                return None
             elif command == "white_screen":
                 self.play_white()
+                return None
             elif command == "stop":  # If the command is "stop", stop the presentation
-                self.stop = False  # Trigger the stop flag for next time
-                self.send_colour("O")
-                self.run_empty()  # Run the empty loop
+                return True
             elif command == "destroy":
                 self.window.close()  # Close the window
+                return None
 
     def send_array(self, array):
         """Send array string of shared memory to other processes"""
@@ -446,7 +447,9 @@ class Presenter:
         )  # Assuming frames are equally distributed
 
         for idx, current_pattern_index in enumerate(pattern_indices):
-            self.communicate()  # Custom function for communication, can be modified as needed
+            stop = self.communicate()  # Custom function for communication, can be modified as needed
+            if stop:
+                return end_times
 
             # Sync frame presentation to the scheduled time
             while time.perf_counter() < s_frames[idx]:
@@ -457,7 +460,7 @@ class Presenter:
             # Handle colour change logic
             if current_pattern_index % change_logic == 0:
                 c = arduino_colours[
-                    current_pattern_index // change_logic % len(arduino_colours)
+                    current_pattern_index
                 ]
                 self.send_colour(c)  # Custom function to send colour to Arduino
 
@@ -599,7 +602,8 @@ class Presenter:
         s_frames = s_frames + delay
 
         print(
-            f"stimulus will start in {s_frames[0] - time.perf_counter()} seconds, window_idx: {self.process_idx}"
+            f"stimulus will start in {s_frames[0] - time.perf_counter()} seconds, window_idx: {self.process_idx}")
+        print(f"current time: {datetime.datetime.now().strftime('%H:%M:%S')}"
         )
         end_times = np.zeros(len(s_frames))
         # Start the presentation loop
