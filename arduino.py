@@ -22,12 +22,11 @@ class Arduino:
         self.connect()
 
     def connect(self):
-        try:
-            self.arduino = connect_to_arduino(self.port, self.baud_rate)
+        self.arduino = connect_to_arduino(self.port, self.baud_rate)
+        if self.arduino is not None:
             self.connected = True
             print("Arduino connected")
-        except FileNotFoundError:
-            self.arduino = None
+        else:
             self.connected = False
             print("Arduino not connected")
 
@@ -47,5 +46,3 @@ class Arduino:
         self.arduino.close()
         self.connected = False
         print("Arduino disconnected")
-
-

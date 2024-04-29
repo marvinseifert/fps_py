@@ -535,10 +535,10 @@ class Presenter:
             print(f"dropped frames (idx): {dropped_frames[0]}")
             print(f"wrong frame times: {wrong_frame_times}")
 
-        # Write log with the noise_dict or any other relevant information
-        write_log(
-            noise_dict, dropped_frames, wrong_frame_times
-        )  # Assuming 'write_log' is a function for logging
+            # Write log with the noise_dict or any other relevant information
+            write_log(
+                noise_dict, dropped_frames, wrong_frame_times
+            )  # Assuming 'write_log' is a function for logging
 
         # Run any additional emptying or resetting procedures
         self.run_empty()  # Assuming 'run_empty' is a method for final procedures
