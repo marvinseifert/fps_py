@@ -18,6 +18,7 @@ blosc = "^1.11.1"
 hdf5plugin = "^4.2.0"
 matplotlib = "^3.8.0"
 scipy = "^1.11.3"
+stimupy = "^1.1.1"
 
 
 [build-system]
