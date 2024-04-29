@@ -113,7 +113,8 @@ class Presenter:
 
     def __del__(self):
         with self.ard_lock:
-            self.ard_queue.put("destroy")
+            if self.mode == "lead":
+                self.arduino.disconnect()
 
     def run_empty(self):
         """
@@ -143,10 +144,16 @@ class Presenter:
             if type(command) == dict:
                 self.play_noise(command)
             elif command == "white_screen":
+                if self.mode == "lead":
+                    with self.ard_lock:
+                        ard_command = self.ard_queue.get()
+                        self.send_colour(ard_command)
                 self.play_white()
             elif command == "stop":  # If the command is "stop", stop the presentation
-                self.stop = False  # Trigger the stop flag for next time
-                self.send_colour("O")
+                self.stop = True  # Trigger the stop flag for next time
+                if self.mode == "lead":
+                    self.send_colour("b")
+                    self.send_colour("O")
                 self.run_empty()  # Run the empty loop
             elif command == "destroy":
                 self.window.close()  # Close the window
@@ -167,6 +174,7 @@ class Presenter:
 
     def send_colour(self, colour):
         """Send a colour signal to the Arduino."""
+
         self.arduino.send(colour)
 
 
@@ -621,14 +629,15 @@ class Presenter:
         """
         This function presents a white screen until a stop command is received.
         """
+        while not self.stop:
+            while not self.window.is_closing:
+                self.window.use()
+                self.window.ctx.clear(1, 1, 1)
+                self.window.swap_buffers()
 
-        while not self.window.is_closing:
-            self.window.use()
-            self.window.ctx.clear(1, 1, 1)
-            self.window.swap_buffers()
-            self.communicate()
-            time.sleep(0.001)
-        self.window.close()
+                self.communicate()
+                time.sleep(0.001)
+            self.window.close()
 
 
 def write_log(noise_dict, dropped_frames=None, wrong_frame_times=None):
