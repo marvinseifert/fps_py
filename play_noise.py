@@ -141,7 +141,7 @@ class Presenter:
                 command = self.queue.get()
 
         if command:
-            if type(command) == dict:
+            if type(command) == dict:  # This would be an array to play.
                 self.play_noise(command)
             elif command == "white_screen":
                 if self.mode == "lead":
@@ -176,7 +176,6 @@ class Presenter:
         """Send a colour signal to the Arduino."""
 
         self.arduino.send(colour)
-
 
     def load_and_initialize_data(self, noise_dict):
         """
@@ -536,9 +535,9 @@ class Presenter:
             print(f"wrong frame times: {wrong_frame_times}")
 
             # Write log with the noise_dict or any other relevant information
-            write_log(
-                noise_dict, dropped_frames, wrong_frame_times
-            )  # Assuming 'write_log' is a function for logging
+        write_log(
+            noise_dict, dropped_frames, wrong_frame_times
+        )  # Assuming 'write_log' is a function for logging
 
         # Run any additional emptying or resetting procedures
         self.run_empty()  # Assuming 'run_empty' is a method for final procedures
