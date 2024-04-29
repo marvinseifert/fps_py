@@ -174,8 +174,8 @@ class Presenter:
 
     def send_colour(self, colour):
         """Send a colour signal to the Arduino."""
-
-        self.arduino.send(colour)
+        if self.mode == "lead":
+            self.arduino.send(colour)
 
     def load_and_initialize_data(self, noise_dict):
         """
