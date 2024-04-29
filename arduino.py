@@ -48,16 +48,4 @@ class Arduino:
         self.connected = False
         print("Arduino disconnected")
 
-    def loop(self):
-        while True:
-            if self.queue is not None:
-                if not self.queue.empty():
-                    with self.queue_lock:
-                        message = self.queue.get()
-                    if message == "destroy":
-                        self.disconnect()
-                        break
-                    self.send(message)
-            else:
-                print("No queue available")
-                break
+

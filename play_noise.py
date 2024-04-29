@@ -110,8 +110,6 @@ class Presenter:
                 queue=ard_queue,
                 queue_lock=ard_lock,
             )
-            self.arduino_thread = threading.Thread(target=self.arduino.loop)
-            self.arduino_thread.start()
 
     def __del__(self):
         with self.ard_lock:
@@ -165,13 +163,12 @@ class Presenter:
     def send_trigger(self):
         """Send a trigger signal to the Arduino."""
         if self.mode == "lead":
-            with self.ard_lock:
-                self.ard_queue.put("T")
+            self.arduino.send("T")
 
     def send_colour(self, colour):
         """Send a colour signal to the Arduino."""
-        with self.ard_lock:
-            self.ard_queue.put(colour)
+        self.arduino.send(colour)
+
 
     def load_and_initialize_data(self, noise_dict):
         """
