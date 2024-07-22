@@ -42,6 +42,11 @@ class Arduino:
             else:
                 print("Could not connect to Arduino or send message")
 
+    def read(self):
+        if self.connected:
+            text = self.arduino.readline(-1)
+            return text
+
     def disconnect(self):
         self.arduino.close()
         self.connected = False

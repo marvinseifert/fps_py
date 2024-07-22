@@ -150,7 +150,12 @@ class Presenter:
                     with self.ard_lock:
                         ard_command = self.ard_queue.get()
                         self.send_colour(ard_command)
-                self.play_white()
+                    self.play_white()
+                while self.arduino.read() != b"O":
+                    pass
+                else:
+                    self.run_empty()
+
             elif command == "stop":  # If the command is "stop", stop the presentation
                 self.stop = True  # Trigger the stop flag for next time
                 if self.mode == "lead":
