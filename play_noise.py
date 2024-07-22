@@ -125,7 +125,9 @@ class Presenter:
         while not self.window.is_closing:
             self.window.use()
             # self.window.ctx.clear(0.5, 0.5, 0.5, 1.0)  # Clear the window with a grey background
-            self.window.ctx.clear(0, 0, 0, 1.0)
+            self.window.ctx.clear(0.5, 0.5, 0.5, 1.0)
+            if self.mode == "lead":
+                self.arduino.send("W")
             self.window.swap_buffers()  # Swap the buffers (update the window content)
             self.communicate()  # Check for commands from the main process (gui)
             time.sleep(0.001)  # Sleep for 1 ms to avoid busy waiting
@@ -153,7 +155,10 @@ class Presenter:
                 self.stop = True  # Trigger the stop flag for next time
                 if self.mode == "lead":
                     self.send_colour("b")
+                    self.send_colour("b")
+                    self.send_colour("b")
                     self.send_colour("O")
+                self.stop = False
                 self.run_empty()  # Run the empty loop
             elif command == "destroy":
                 self.window.close()  # Close the window

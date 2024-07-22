@@ -411,8 +411,7 @@ class NoiseGeneratorApp:
 
     def stop_arduino(self, *args):
         """Stop the arduino."""
-        with self.ard_lock:
-            self.ard_queue.put("b")
+
         with self.lock:
             for _ in range(self.nr_processes):
                 self.queue1.put("stop")
