@@ -158,8 +158,6 @@ class Presenter:
                     self.send_colour("b")
                     self.send_colour("b")
                     self.send_colour("O")
-                self.stop = False
-                self.run_empty()  # Run the empty loop
             elif command == "destroy":
                 self.window.close()  # Close the window
 
@@ -449,14 +447,11 @@ class Presenter:
         vao : moderngl.VertexArray
             The vertex array object for rendering.
         """
-        last_update = time.perf_counter()
-        time_per_frame = 1 / len(
-            pattern_indices
-        )  # Assuming frames are equally distributed
 
         for idx, current_pattern_index in enumerate(pattern_indices):
             self.communicate()  # Custom function for communication, can be modified as needed
-
+            if self.stop:
+                return end_times
             # Sync frame presentation to the scheduled time
             while time.perf_counter() < s_frames[idx]:
                 pass  # Busy-wait until the scheduled frame time
@@ -545,6 +540,7 @@ class Presenter:
         )  # Assuming 'write_log' is a function for logging
 
         # Run any additional emptying or resetting procedures
+        self.stop = False
         self.run_empty()  # Assuming 'run_empty' is a method for final procedures
 
     def play_noise(self, noise_dict):
@@ -610,6 +606,7 @@ class Presenter:
         print(
             f"stimulus will start in {s_frames[0] - time.perf_counter()} seconds, window_idx: {self.process_idx}"
         )
+        print(f"Current time is {datetime.datetime.now()}")
         end_times = np.zeros(len(s_frames))
         # Start the presentation loop
         end_times = self.presentation_loop(

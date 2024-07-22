@@ -86,6 +86,10 @@ class NoiseGeneratorApp:
         self.arduino_command.insert(0, "Arduino Command")
         self.arduino_command.grid(row=8, column=0, padx=10, pady=5)
 
+        # Insert a traffic light indicator for the arduino
+        self.arduino_spinner = ttk.Progressbar(self.left_frame, mode="indeterminate")
+        self.arduino_spinner.grid(row=9, column=0, padx=10, pady=5)
+
         # Variables and labels for the left frame entries
         variables = [
             self.checkerboard_var,
@@ -403,6 +407,7 @@ class NoiseGeneratorApp:
 
     def on_send_arduino_cmd(self, *args):
         """Send the arduino command to the arduino."""
+        self.arduino_spinner.start()
         with self.lock:
             for _ in range(self.nr_processes):
                 self.queue1.put("white_screen")
@@ -411,7 +416,7 @@ class NoiseGeneratorApp:
 
     def stop_arduino(self, *args):
         """Stop the arduino."""
-
+        self.arduino_spinner.stop()
         with self.lock:
             for _ in range(self.nr_processes):
                 self.queue1.put("stop")
