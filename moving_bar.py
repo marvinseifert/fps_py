@@ -14,7 +14,7 @@ DIRECTIONS = {
     "up-right": (2, -2, 45),
     "up-left": (-2, -2, -45),
     "down-right": (2, 2, -45),
-    "down-left": (-2, 2, 45)
+    "down-left": (-2, 2, 45),
 }
 
 
@@ -34,7 +34,7 @@ def generate_stimulus(nt, bar_width):
     num_stimuli = 8 * repeats
 
     # Initialize an array to store the stimulus
-    stimulus = np.zeros((nt * num_stimuli, 600, 600), dtype=np.uint8)
+    stimulus = np.zeros((nt * num_stimuli, 800, 800), dtype=np.uint8)
 
     # Generate the stimulus for each direction and repetition
     for i, direction in enumerate(DIRECTIONS.keys()):
@@ -46,7 +46,7 @@ def generate_stimulus(nt, bar_width):
             idx = i * repeats * nt + rep * nt
 
             # Store the frames in the stimulus array
-            stimulus[idx:idx + nt] = bar_frames
+            stimulus[idx : idx + nt] = bar_frames
 
     return stimulus
 
@@ -76,7 +76,9 @@ def create_large_diagonal_bar(frame_size, width, orientation):
 
     # Creating a large frame to ensure the bar can traverse the entire frame diagonally
 
-    large_frame = np.zeros((frame_size[0] + width, frame_size[1] + width), dtype=np.uint8)
+    large_frame = np.zeros(
+        (frame_size[0] + width, frame_size[1] + width), dtype=np.uint8
+    )
 
     # Creating a thin diagonal line on the large frame
 
@@ -152,10 +154,10 @@ def create_large_diagonal_bar(frame_size, width, orientation):
 
 def move_bar_optimized(nt, width, direction, speed=2):
     dx, dy = DIRECTIONS[direction][:2]
-    extended_frame_size = (600 + 2 * width, 600 + 2 * width)
-    central_slice = (slice(width, width + 600), slice(width, width + 600))
+    extended_frame_size = (800 + 2 * width, 800 + 2 * width)
+    central_slice = (slice(width, width + 800), slice(width, width + 800))
 
-    frames = np.zeros((nt, 600, 600), dtype=np.uint8)
+    frames = np.zeros((nt, 800, 800), dtype=np.uint8)
 
     for t in range(nt):
         frame_ext = np.zeros(extended_frame_size, dtype=np.uint8)
@@ -163,40 +165,52 @@ def move_bar_optimized(nt, width, direction, speed=2):
 
         if direction in ["up-left", "down-left"]:
             # Create a vertical bar
-            frame_ext[:, pos_x-width:pos_x] = 1
+            frame_ext[:, pos_x - width : pos_x] = 1
             # Rotate the frame
             angle = DIRECTIONS[direction][2]
-            frame_ext = rotate(frame_ext, angle, reshape=False, order=0, mode='constant', cval=0)
+            frame_ext = rotate(
+                frame_ext, angle, reshape=False, order=0, mode="constant", cval=0
+            )
         elif direction in ["up-right", "down-right"]:
             # Create a vertical bar
-            frame_ext[:, pos_x:pos_x + width] = 1
+            frame_ext[:, pos_x : pos_x + width] = 1
             # Rotate the frame
             angle = DIRECTIONS[direction][2]
-            frame_ext = rotate(frame_ext, angle, reshape=False, order=0, mode='constant', cval=0)
+            frame_ext = rotate(
+                frame_ext, angle, reshape=False, order=0, mode="constant", cval=0
+            )
         elif "up" in direction or "down" in direction:
-            frame_ext[pos_y:pos_y + width, :] = 1
+            frame_ext[pos_y : pos_y + width, :] = 1
         elif "left" in direction:
-            frame_ext[:, pos_x:pos_x + width] = 1
+            frame_ext[:, pos_x : pos_x + width] = 1
         elif "right" in direction:
-            frame_ext[:, pos_x - width:pos_x] = 1
+            frame_ext[:, pos_x - width : pos_x] = 1
 
         frames[t] = frame_ext[central_slice]
 
     return frames
 
-nt = 400  # number of frames per stimulus
+
+nt = 600  # number of frames per stimulus
 bar_width = 100  # width of the bar
 
 # %%
 # Generate the stimulus
 stimulus = generate_stimulus(nt, bar_width)
+stimulus = stimulus[::2, :, :]
 
 # %%
-stimulus[stimulus==1] = 255
+stimulus[stimulus == 1] = 255
 # %%
-with h5py.File("stimuli/moving_bar_small.h5", 'w') as f:
-    f.create_dataset('Noise', data=stimulus, dtype="uint8",
-                     compression=hdf5plugin.Blosc(cname='blosclz', clevel=9, shuffle=hdf5plugin.Blosc.NOSHUFFLE))
+with h5py.File("stimuli/moving_bar_bigger.h5", "w") as f:
+    f.create_dataset(
+        "Noise",
+        data=stimulus,
+        dtype="uint8",
+        compression=hdf5plugin.Blosc(
+            cname="blosclz", clevel=9, shuffle=hdf5plugin.Blosc.NOSHUFFLE
+        ),
+    )
     f.create_dataset(name="Frame_Rate", data=60, dtype="uint8")
     f.create_dataset(name="Checkerboard_Size", data=1, dtype="uint64")
     f.create_dataset(name="Shuffle", data=False, dtype="bool")
@@ -204,7 +218,9 @@ with h5py.File("stimuli/moving_bar_small.h5", 'w') as f:
 
 # %%
 import cv2
-def save_as_video(frames, filename='output.avi', fps=30):
+
+
+def save_as_video(frames, filename="output.avi", fps=30):
     """
     Save the frames as a video using OpenCV.
 
@@ -215,7 +231,7 @@ def save_as_video(frames, filename='output.avi', fps=30):
 
     """
     num_frames, height, width = frames.shape
-    fourcc = cv2.VideoWriter_fourcc(*'XVID')
+    fourcc = cv2.VideoWriter_fourcc(*"XVID")
     out = cv2.VideoWriter(filename, fourcc, fps, (width, height), isColor=False)
 
     for i in range(num_frames):
@@ -228,4 +244,4 @@ def save_as_video(frames, filename='output.avi', fps=30):
     out.release()
 
 
-save_as_video(stimulus, filename="stimuli/moving_bar.avi", fps=60)
+# save_as_video(stimulus, filename="stimuli/moving_bar.avi", fps=60)

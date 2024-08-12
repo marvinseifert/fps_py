@@ -32,6 +32,8 @@ class Presenter:
         lock,
         ard_queue,
         ard_lock,
+        status_queue,
+        status_lock,
         mode,
         delay=10,
     ):
@@ -65,9 +67,12 @@ class Presenter:
         self.mode = mode
         self.ard_queue = ard_queue
         self.ard_lock = ard_lock
+        self.status_queue = status_queue
+        self.status_lock = status_lock
         self.nr_followers = len(config_dict["windows"].keys()) - 1
         self.c_channels = config_dict["windows"][str(self.process_idx)]["channels"]
         self.delay = delay
+        self.arduino_running = False
         settings.WINDOW[
             "class"
         ] = "moderngl_window.context.pyglet.Window"  # using a pyglet window
@@ -122,6 +127,7 @@ class Presenter:
 
 
         """
+
         # if self.mode == "lead":
         #     self.arduino.send("W")
         while not self.window.is_closing:
@@ -151,17 +157,33 @@ class Presenter:
                     with self.ard_lock:
                         ard_command = self.ard_queue.get()
                         self.send_colour(ard_command)
+                        self.arduino_running = True
+                        arduino_thread = threading.Thread(
+                            target=self.receive_arduino_status
+                        )
+                        arduino_thread.start()
 
             elif command == "stop":  # If the command is "stop", stop the presentation
-                self.stop = True  # Trigger the stop flag for next time
+                self.arduino_running = False  # Trigger the stop flag for next time
                 if self.mode == "lead":
                     self.send_colour("b")
                     self.send_colour("b")
                     self.send_colour("b")
                     self.send_colour("O")
-                self.run_empty()
+                self.stop = True
             elif command == "destroy":
                 self.window.close()  # Close the window
+
+    def receive_arduino_status(self):
+        buffer = True
+        while not self.arduino_running:
+            status = self.arduino.read()
+            if status != "empty":
+                buffer = False
+            if status == "empty" and not buffer:
+                self.arduino_running = False
+                self.status_queue.put("done")
+                break
 
     def send_array(self, array):
         """Send array string of shared memory to other processes"""
@@ -453,6 +475,9 @@ class Presenter:
         for idx, current_pattern_index in enumerate(pattern_indices):
             self.communicate()  # Custom function for communication, can be modified as needed
             if self.stop:
+                del patterns
+                del program
+                del vao
                 return end_times
             # Sync frame presentation to the scheduled time
             while time.perf_counter() < s_frames[idx]:
@@ -519,10 +544,12 @@ class Presenter:
         # Release all pattern textures
         for pattern in patterns:
             pattern.release()
-
+        del patterns
         # Release the buffer and vertex array object
         vbo.release()
         vao.release()
+        del vbo
+        del vao
 
         # Check which frames were dropped
         dropped_frames = np.where(end_times - (1 / desired_fps) > 0)
@@ -543,7 +570,7 @@ class Presenter:
 
         # Run any additional emptying or resetting procedures
         self.stop = False
-        self.run_empty()  # Assuming 'run_empty' is a method for final procedures
+        return
 
     def play_noise(self, noise_dict):
         """
@@ -627,8 +654,6 @@ class Presenter:
         self.cleanup_and_finalize(
             patterns, vbo, vao, noise_dict, end_times, desired_fps
         )
-
-
 
 
 def write_log(noise_dict, dropped_frames=None, wrong_frame_times=None):
@@ -743,6 +768,8 @@ def pyglet_app_lead(
     lock,
     ard_queue,
     ard_lock,
+    status_queue,
+    status_lock,
     delay=10,
 ):
     """
@@ -774,6 +801,8 @@ def pyglet_app_lead(
         lock,
         ard_queue,
         ard_lock,
+        status_queue,
+        status_lock,
         mode="lead",
         delay=delay,
     )

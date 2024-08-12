@@ -1,3 +1,4 @@
+import threading
 import tkinter as tk
 from tkinter import ttk
 from pathlib import Path
@@ -12,7 +13,17 @@ import numpy as np
 class NoiseGeneratorApp:
     """Class for the Noise Generator GUI."""
 
-    def __init__(self, root, queue1, lock, ard_queue, ard_lock, nr_processes=1):
+    def __init__(
+        self,
+        root,
+        queue1,
+        lock,
+        ard_queue,
+        ard_lock,
+        status_queue,
+        status_lock,
+        nr_processes=1,
+    ):
         """
         Parameters
         ----------
@@ -26,6 +37,8 @@ class NoiseGeneratorApp:
         self.queue1 = queue1
         self.ard_queue = ard_queue
         self.ard_lock = ard_lock
+        self.status_queue = status_queue
+        self.status_lock = status_lock
         self.root = root
         self.nr_processes = nr_processes
         self.root.title("Noise Generator GUI")
@@ -66,7 +79,7 @@ class NoiseGeneratorApp:
             value=""
         )  # variable for colour change checkbox
         self.arduino_cmd_var = tk.StringVar(value="")  # variable for arduino command
-
+        self.arduino_running = False
         self._initialize_ui()  # initialize the UI
 
     def _initialize_ui(self):
@@ -86,9 +99,11 @@ class NoiseGeneratorApp:
         self.arduino_command.insert(0, "Arduino Command")
         self.arduino_command.grid(row=8, column=0, padx=10, pady=5)
 
-        # # Insert a traffic light indicator for the arduino
-        # self.arduino_spinner = ttk.Progressbar(self.left_frame, mode="indeterminate")
-        # self.arduino_spinner.grid(row=9, column=0, padx=10, pady=5)
+        # Insert a traffic light indicator for the arduino
+        self.arduino_light = tk.Label(
+            self.left_frame, text="stim running", bg="red", width=10
+        )
+        self.arduino_light.grid(row=9, column=0, padx=10, pady=5)
 
         # Variables and labels for the left frame entries
         variables = [
@@ -407,12 +422,26 @@ class NoiseGeneratorApp:
 
     def on_send_arduino_cmd(self, *args):
         """Send the arduino command to the arduino."""
-        # self.arduino_spinner.start()
+        self.arduino_running = True
+        self.arduino_light.config(bg="green")
         with self.lock:
             for _ in range(self.nr_processes):
                 self.queue1.put("white_screen")
         with self.ard_lock:
             self.ard_queue.put(self.arduino_cmd_var.get())
+            arduino_thread = threading.Thread(target=self.arduino_done_callback)
+            self.root.after(100, arduino_thread.start)
+        return
+
+    def arduino_done_callback(self):
+        while self.arduino_running:
+            status = None
+            with self.status_lock:
+                status = self.status_queue.get()
+            if status == "done":
+                self.arduino_light.config(bg="red")
+                self.arduino_running = False
+                break
 
     def stop_arduino(self, *args):
         """Stop the arduino."""
@@ -420,6 +449,8 @@ class NoiseGeneratorApp:
         with self.lock:
             for _ in range(self.nr_processes):
                 self.queue1.put("stop")
+        self.arduino_running = False
+        self.arduino_light.config(bg="red")
 
     def on_close(self):
         """Called when the window is closed."""
@@ -440,7 +471,9 @@ class NoiseGeneratorApp:
         self.root.destroy()
 
 
-def tkinter_app(queue1, lock, ard_queue, ard_lock, nr_processes):
+def tkinter_app(
+    queue1, lock, ard_queue, ard_lock, status_queue, status_lock, nr_processes
+):
     """Create the tkinter GUI and run the mainloop. Used to run the GUI in a separate process.
     Parameters
     ----------
@@ -450,7 +483,7 @@ def tkinter_app(queue1, lock, ard_queue, ard_lock, nr_processes):
 
     root = tk.Tk()  # Create the root window
     app = NoiseGeneratorApp(
-        root, queue1, lock, ard_queue, ard_lock, nr_processes
+        root, queue1, lock, ard_queue, ard_lock, status_queue, status_lock, nr_processes
     )  # Create the NoiseGeneratorApp instance
     root.protocol(
         "WM_DELETE_WINDOW", app.on_close

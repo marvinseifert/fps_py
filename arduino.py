@@ -43,8 +43,12 @@ class Arduino:
                 print("Could not connect to Arduino or send message")
 
     def read(self):
+        text = None
         if self.connected:
-            text = self.arduino.readline(-1)
+            try:
+                text = self.arduino.readline().decode("utf-8").strip()
+            except UnicodeDecodeError:
+                pass
             return text
 
     def disconnect(self):
