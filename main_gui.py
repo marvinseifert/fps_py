@@ -449,8 +449,10 @@ class NoiseGeneratorApp:
         with self.lock:
             for _ in range(self.nr_processes):
                 self.queue1.put("stop")
-        self.arduino_running = False
-        self.arduino_light.config(bg="red")
+        # self.arduino_running = False
+        # with self.status_lock:
+        #     self.status_queue.get()
+        # self.arduino_light.config(bg="red")
 
     def on_close(self):
         """Called when the window is closed."""

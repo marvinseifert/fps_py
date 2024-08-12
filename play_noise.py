@@ -165,20 +165,27 @@ class Presenter:
 
             elif command == "stop":  # If the command is "stop", stop the presentation
                 self.arduino_running = False  # Trigger the stop flag for next time
+                self.status_queue.put("done")
                 if self.mode == "lead":
                     self.send_colour("b")
                     self.send_colour("b")
                     self.send_colour("b")
                     self.send_colour("O")
                 self.stop = True
+                current_time = time.perf_counter()
+                while time.perf_counter() - current_time < 1:
+                    pass
+                self.stop = False
+
             elif command == "destroy":
                 self.window.close()  # Close the window
 
     def receive_arduino_status(self):
         buffer = True
-        while not self.arduino_running:
+        self.arduino.arduino.reset_input_buffer()
+        while not self.stop:
             status = self.arduino.read()
-            if status != "empty":
+            if status == "Trigger":
                 buffer = False
             if status == "empty" and not buffer:
                 self.arduino_running = False
