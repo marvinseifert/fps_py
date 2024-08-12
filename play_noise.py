@@ -122,12 +122,13 @@ class Presenter:
 
 
         """
+        # if self.mode == "lead":
+        #     self.arduino.send("W")
         while not self.window.is_closing:
             self.window.use()
             # self.window.ctx.clear(0.5, 0.5, 0.5, 1.0)  # Clear the window with a grey background
-            self.window.ctx.clear(0.5, 0.5, 0.5, 1.0)
-            if self.mode == "lead":
-                self.arduino.send("W")
+            self.window.ctx.clear(1, 1, 1, 1.0)
+
             self.window.swap_buffers()  # Swap the buffers (update the window content)
             self.communicate()  # Check for commands from the main process (gui)
             time.sleep(0.001)  # Sleep for 1 ms to avoid busy waiting
@@ -150,11 +151,6 @@ class Presenter:
                     with self.ard_lock:
                         ard_command = self.ard_queue.get()
                         self.send_colour(ard_command)
-                    self.play_white()
-                while self.arduino.read() != b"O":
-                    pass
-                else:
-                    self.run_empty()
 
             elif command == "stop":  # If the command is "stop", stop the presentation
                 self.stop = True  # Trigger the stop flag for next time
@@ -163,6 +159,7 @@ class Presenter:
                     self.send_colour("b")
                     self.send_colour("b")
                     self.send_colour("O")
+                self.run_empty()
             elif command == "destroy":
                 self.window.close()  # Close the window
 
@@ -631,19 +628,7 @@ class Presenter:
             patterns, vbo, vao, noise_dict, end_times, desired_fps
         )
 
-    def play_white(self):
-        """
-        This function presents a white screen until a stop command is received.
-        """
-        while not self.stop:
-            while not self.window.is_closing:
-                self.window.use()
-                self.window.ctx.clear(1, 1, 1)
-                self.window.swap_buffers()
 
-                self.communicate()
-                time.sleep(0.001)
-            self.window.close()
 
 
 def write_log(noise_dict, dropped_frames=None, wrong_frame_times=None):
