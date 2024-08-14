@@ -151,8 +151,10 @@ class Presenter:
 
         if command:
             if type(command) == dict:  # This would be an array to play.
+                self.stop = False
                 self.play_noise(command)
             elif command == "white_screen":
+                self.stop = False
                 if self.mode == "lead":
                     with self.ard_lock:
                         ard_command = self.ard_queue.get()
@@ -175,8 +177,6 @@ class Presenter:
                 current_time = time.perf_counter()
                 while time.perf_counter() - current_time < 1:
                     pass
-                self.stop = False
-
             elif command == "destroy":
                 self.window.close()  # Close the window
 
@@ -205,6 +205,11 @@ class Presenter:
         """Send a trigger signal to the Arduino."""
         if self.mode == "lead":
             self.arduino.send("T")
+
+    def switch_trigger_modes(self, mode="t_s_off"):
+        """Switch the trigger mode of the Arduino."""
+        if self.mode == "lead":
+            self.arduino.send(mode)
 
     def send_colour(self, colour):
         """Send a colour signal to the Arduino."""
@@ -645,6 +650,7 @@ class Presenter:
         print(f"Current time is {datetime.datetime.now()}")
         end_times = np.zeros(len(s_frames))
         # Start the presentation loop
+        self.switch_trigger_modes("t_s_on")
         end_times = self.presentation_loop(
             pattern_indices,
             s_frames,
@@ -656,6 +662,7 @@ class Presenter:
             program,
             vao,
         )
+        self.switch_trigger_modes("t_s_off")
 
         # Clean up and finalize the presentation
         self.cleanup_and_finalize(
