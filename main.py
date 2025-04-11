@@ -5,39 +5,15 @@
 from multiprocessing import Process, Queue, Lock
 from main_gui import tkinter_app
 from play_noise import pyglet_app_lead, pyglet_app_follow
-from multiprocessing import shared_memory
-import numpy as np
+import window_settings
 
-windows = {
-    "1": {
-        "y_shift": 0,
-        "x_shift": -1000,
-        "window_size": (900, 900),
-        "fullscreen": False,
-        "style": "transparent",
-        "channels": np.array([0, 1, 2]),
-        "arduino_port": "COM6",
-        "arduino_baud_rate": 9600,
-    }
-}
-#     "2": {
-#         "y_shift": 0,
-#         "x_shift": -1000,
-#         "window_size": (900, 900),
-#         "fullscreen": False,
-#         "style": "transparent",
-#         "channels": np.array([0, 1, 2]),
-#         "arduino_port": "COM3",
-#         "arduino_baud_rate": 9600,
-#     },
-# }
-
+# Load the window settings
+windows = window_settings.get_windows()
 
 # Configuration dictionary for the pyglet app window. Change according to your needs.
-config_dict = {"windows": windows, "gl_version": (4, 1), "fps": 60}
+config_dict = {"windows": windows, "gl_version": (4, 1), "fps": 75}
 
 nr_windows = len(windows)
-
 
 presentation_delay = 10  # Delay between loading of the stimulus to the start of the presentation in seconds
 

@@ -5,7 +5,7 @@ from create_noise import (
     generate_multicolor_checkerboard_pattern,
 )
 import hdf5plugin
-import blosc
+from pathlib import Path
 
 
 def shuffle_pattern(pattern, checker_size):
@@ -39,7 +39,12 @@ def shuffle_pattern(pattern, checker_size):
 
 
 def generate_and_store_3d_array(
-    frames, checkerboard_size, width_in_pixels, height_in_pixels, fps, name="Noise.h5"
+    frames: int,
+    checkerboard_size: int,
+    width_in_pixels: int,
+    height_in_pixels: int,
+    fps: int,
+    name: str | Path = "Noise.h5",
 ):
     """Generate a 3D array of checkerboard patterns and store it in an HDF5 file.
     Parameters

@@ -133,7 +133,7 @@ class Presenter:
         while not self.window.is_closing:
             self.window.use()
             # self.window.ctx.clear(0.5, 0.5, 0.5, 1.0)  # Clear the window with a grey background
-            self.window.ctx.clear(1, 1, 1, 1.0)
+            self.window.ctx.clear(0, 0, 0, 1.0)
 
             self.window.swap_buffers()  # Swap the buffers (update the window content)
             self.communicate()  # Check for commands from the main process (gui)
@@ -499,9 +499,8 @@ class Presenter:
 
             # Handle colour change logic
             if current_pattern_index % change_logic == 0:
-                c = arduino_colours[
-                    current_pattern_index // change_logic % len(arduino_colours)
-                ]
+                c = arduino_colours[current_pattern_index]
+
                 self.send_colour(c)  # Custom function to send colour to Arduino
 
             # Clear the window and render the noise
@@ -605,7 +604,7 @@ class Presenter:
         ) = self.load_and_initialize_data(noise_dict)
 
         arduino_colours = self.process_arduino_colours(
-            arduino_colours, change_logic, len(s_frames)
+            arduino_colours, change_logic, len(s_frames) - 1
         )
 
         # Load the noise data

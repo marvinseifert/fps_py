@@ -19,6 +19,8 @@ hdf5plugin = "^4.2.0"
 matplotlib = "^3.8.0"
 scipy = "^1.11.3"
 stimupy = "^1.1.1"
+paramiko = "^3.5.1"
+scpclient = "^0.7"
 
 
 [build-system]
