@@ -1,11 +1,15 @@
 # Description: This is the main file for the project. It starts two processes, one for the GUI and one for the noise
 # presentation. The GUI is implemented using tkinter and the noise presentation is implemented using pyglet.
 # Author: Marvin Seifert
+# import pydevd_pycharm
+# pydevd_pycharm.settrace('localhost', port=5678, stdout_to_server=True, stderr_to_server=True)
 
 from multiprocessing import Process, Queue, Lock
 from main_gui import tkinter_app
 from play_noise import pyglet_app_lead, pyglet_app_follow
 import window_settings
+# import pydevd_pycharm
+# pydevd_pycharm.settrace('localhost', port=5679, stdout_to_server=True, stderr_to_server=True, suspend=False)
 
 # Load the window settings
 windows = window_settings.get_windows()

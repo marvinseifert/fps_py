@@ -12,7 +12,7 @@ from multiprocessing import sharedctypes
 import pyglet
 from arduino import Arduino
 import threading
-
+import pydevd_pycharm
 
 class Presenter:
     """
@@ -187,7 +187,7 @@ class Presenter:
             status = self.arduino.read()
             if status == "Trigger":
                 buffer = False
-            if status == "empty" and not buffer:
+            if status == "finished" and not buffer:
                 self.arduino_running = False
                 self.status_queue.put("done")
                 break

@@ -19,7 +19,7 @@ def get_windows():
             "fullscreen": False,
             "style": "transparent",
             "channels": np.array([0, 1, 2]),
-            "arduino_port": "COM4",
+            "arduino_port": "/dev/ttyUSB0",
             "arduino_baud_rate": 9600,
         }
     }

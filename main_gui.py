@@ -42,6 +42,7 @@ class NoiseGeneratorApp:
             Queue for communication with the main process (gui).
 
         """
+
         self.lock = lock
         self.queue1 = queue1
         self.ard_queue = ard_queue
@@ -335,6 +336,10 @@ class NoiseGeneratorApp:
                 self.queue1.put(
                     queue_data
                 )  # Put the noise name in the queue for each window thread to read
+        self.arduino_running = True
+        self.arduino_light.config(bg="green")
+        # change text of the button
+        self.arduino_light.config(text="Stim running")
 
     def on_stop_noise(self):
         """Stop the noise playback."""
@@ -343,6 +348,7 @@ class NoiseGeneratorApp:
                 self.queue1.put(
                     "stop"
                 )  # Put "stop" in the queue for the pyglet thread to read
+        self.arduino_done_callback()
 
     def refresh_file_list(self):
         """Refresh the list of .h5py files in the stimuli directory."""
