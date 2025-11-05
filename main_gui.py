@@ -469,6 +469,12 @@ class NoiseGeneratorApp:
         """Stop the arduino."""
         # self.arduino_spinner.stop()
         with self.lock:
+            # Drain any pending items in the queue so "stop" is processed next
+            try:
+                while True:
+                    self.queue1.get_nowait()
+            except Exception:
+                pass
             for _ in range(self.nr_processes):
                 self.queue1.put("stop")
         # self.arduino_running = False
