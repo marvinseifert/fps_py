@@ -117,9 +117,18 @@ class Presenter:
             )
 
     def __del__(self):
-        with self.ard_lock:
-            if self.mode == "lead":
-                self.arduino.disconnect()
+        try:
+            if getattr(self, "mode", None) == "lead":
+                ard_lock = getattr(self, "ard_lock", None)
+                arduino = getattr(self, "arduino", None)
+                if ard_lock is not None and arduino is not None:
+                    try:
+                        with ard_lock:
+                            arduino.disconnect()
+                    except AttributeError:
+                        pass
+        except AttributeError:
+            pass
 
     def run_empty(self):
         """
@@ -831,6 +840,8 @@ def pyglet_app_follow(
     lock,
     ard_queue,
     ard_lock,
+    status_queue,
+    status_lock,
     delay=10,
 ):
     """
@@ -862,6 +873,8 @@ def pyglet_app_follow(
         lock,
         ard_queue,
         ard_lock,
+        status_queue,
+        status_lock,
         mode="follow",
         delay=delay,
     )

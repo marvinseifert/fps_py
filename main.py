@@ -80,6 +80,8 @@ if __name__ == "__main__":
                 queue_lock,
                 arduino_queue,
                 arduino_lock,
+                status_queue,
+                status_lock,
                 presentation_delay,
             ),
         )
