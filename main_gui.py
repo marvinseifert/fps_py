@@ -1,3 +1,13 @@
+"""
+This file contains code for the GUI application which runs in a separate process.
+It allows the user to generate noise patterns, play them, and send commands to an Arduino device.
+The GUI is built using tkinter and uses multiprocessing for inter-process communication.
+@ Marvin Seifert, 2024
+"""
+
+
+import contextlib
+import threading
 import tkinter as tk
 from tkinter import ttk
 from pathlib import Path
@@ -12,7 +22,17 @@ import numpy as np
 class NoiseGeneratorApp:
     """Class for the Noise Generator GUI."""
 
-    def __init__(self, root, queue1, lock, ard_queue, ard_lock, nr_processes=1):
+    def __init__(
+        self,
+        root: tk.Tk,
+        queue1: Queue,
+        lock: threading.Lock,
+        ard_queue: Queue,
+        ard_lock: threading.Lock,
+        status_queue: Queue,
+        status_lock: threading.Lock,
+        nr_processes: int = 1,
+    ):
         """
         Parameters
         ----------
@@ -22,15 +42,18 @@ class NoiseGeneratorApp:
             Queue for communication with the main process (gui).
 
         """
+
         self.lock = lock
         self.queue1 = queue1
         self.ard_queue = ard_queue
         self.ard_lock = ard_lock
+        self.status_queue = status_queue
+        self.status_lock = status_lock
         self.root = root
         self.nr_processes = nr_processes
         self.root.title("Noise Generator GUI")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
-        self.root.geometry("600x500")
+        self.root.geometry("600x500")  # application window size
 
         # Create frames for left and right sections
         self.left_frame = ttk.Frame(self.root, padding="10")
@@ -66,7 +89,7 @@ class NoiseGeneratorApp:
             value=""
         )  # variable for colour change checkbox
         self.arduino_cmd_var = tk.StringVar(value="")  # variable for arduino command
-
+        self.arduino_running = False
         self._initialize_ui()  # initialize the UI
 
     def _initialize_ui(self):
@@ -86,9 +109,11 @@ class NoiseGeneratorApp:
         self.arduino_command.insert(0, "Arduino Command")
         self.arduino_command.grid(row=8, column=0, padx=10, pady=5)
 
-        # # Insert a traffic light indicator for the arduino
-        # self.arduino_spinner = ttk.Progressbar(self.left_frame, mode="indeterminate")
-        # self.arduino_spinner.grid(row=9, column=0, padx=10, pady=5)
+        # Insert a traffic light indicator for the arduino
+        self.arduino_light = tk.Label(
+            self.left_frame, text="no stim", bg="red", width=10
+        )
+        self.arduino_light.grid(row=9, column=0, padx=10, pady=5)
 
         # Variables and labels for the left frame entries
         variables = [
@@ -298,7 +323,6 @@ class NoiseGeneratorApp:
 
         _, _, frames, frame_rate = load_noise_info(noise_name)
         s_frames = schedule_frames(frames, frame_rate)
-        print(s_frames)
 
         queue_data = {
             "file": noise_name,
@@ -311,7 +335,11 @@ class NoiseGeneratorApp:
             for _ in range(self.nr_processes):
                 self.queue1.put(
                     queue_data
-                )  # Put the noise name in the queue for the pyglet thread to read
+                )  # Put the noise name in the queue for each window thread to read
+        self.arduino_running = True
+        self.arduino_light.config(bg="green")
+        # change text of the button
+        self.arduino_light.config(text="Stim running")
 
     def on_stop_noise(self):
         """Stop the noise playback."""
@@ -320,13 +348,14 @@ class NoiseGeneratorApp:
                 self.queue1.put(
                     "stop"
                 )  # Put "stop" in the queue for the pyglet thread to read
+        self.arduino_done_callback()
 
     def refresh_file_list(self):
         """Refresh the list of .h5py files in the stimuli directory."""
 
         stimuli_dir = Path("stimuli")
 
-        if stimuli_dir.exists() and stimuli_dir.is_dir():
+        if stimuli_dir.is_dir():
             files = [f.name for f in stimuli_dir.iterdir() if f.suffix == ".h5"]
             self.file_listbox.delete(0, tk.END)  # Clear the listbox
             for file in files:
@@ -345,8 +374,7 @@ class NoiseGeneratorApp:
 
         """
 
-        index = self.file_listbox.curselection()  # Get the index of the selected item
-        if index:
+        if index := self.file_listbox.curselection():
             try:
                 file_name = self.file_listbox.get(index[0])
 
@@ -378,7 +406,7 @@ class NoiseGeneratorApp:
 
     def compute_size(self, *args):
         """Compute the estimated size of the noise file and update the label text."""
-        try:
+        with contextlib.suppress(ValueError):
             noise_frequency = int(self.noise_frequency_var.get())
             noise_duration = float(self.noise_duration_var.get())
             frames = int(noise_duration * 60 * noise_frequency)
@@ -402,24 +430,57 @@ class NoiseGeneratorApp:
             self.size_label.config(
                 text=f"Estimated size: {size_str}"
             )  # Update the label text
-        except ValueError:
-            pass
 
     def on_send_arduino_cmd(self, *args):
         """Send the arduino command to the arduino."""
-        # self.arduino_spinner.start()
+        self.arduino_running = True
+        self.arduino_light.config(bg="green")
+        # change text of the button
+        self.arduino_light.config(text="Stim running")
+
         with self.lock:
             for _ in range(self.nr_processes):
                 self.queue1.put("white_screen")
         with self.ard_lock:
             self.ard_queue.put(self.arduino_cmd_var.get())
+            arduino_thread = threading.Thread(target=self.arduino_done_callback)
+            self.root.after(100, arduino_thread.start)
+        return
+
+    def arduino_done_callback(self):
+        while self.arduino_running:
+            with self.status_lock:
+                if not self.status_queue.empty():
+                    status = self.status_queue.get()
+                    if status == "done":
+                        self.arduino_light.config(bg="red")
+                        self.arduino_light.config(text="no stim")
+                        self.arduino_running = False
+                        break
+                else:
+                    time.sleep(0.1)  # Avoid busy-waiting
+
+        # Clear any remaining messages in the queue
+        with self.status_lock:
+            while not self.status_queue.empty():
+                self.status_queue.get()
 
     def stop_arduino(self, *args):
         """Stop the arduino."""
         # self.arduino_spinner.stop()
         with self.lock:
+            # Drain any pending items in the queue so "stop" is processed next
+            try:
+                while True:
+                    self.queue1.get_nowait()
+            except Exception:
+                pass
             for _ in range(self.nr_processes):
                 self.queue1.put("stop")
+        # self.arduino_running = False
+        # with self.status_lock:
+        #     self.status_queue.get()
+        # self.arduino_light.config(bg="red")
 
     def on_close(self):
         """Called when the window is closed."""
@@ -440,7 +501,9 @@ class NoiseGeneratorApp:
         self.root.destroy()
 
 
-def tkinter_app(queue1, lock, ard_queue, ard_lock, nr_processes):
+def tkinter_app(
+    queue1, lock, ard_queue, ard_lock, status_queue, status_lock, nr_processes
+):
     """Create the tkinter GUI and run the mainloop. Used to run the GUI in a separate process.
     Parameters
     ----------
@@ -450,7 +513,7 @@ def tkinter_app(queue1, lock, ard_queue, ard_lock, nr_processes):
 
     root = tk.Tk()  # Create the root window
     app = NoiseGeneratorApp(
-        root, queue1, lock, ard_queue, ard_lock, nr_processes
+        root, queue1, lock, ard_queue, ard_lock, status_queue, status_lock, nr_processes
     )  # Create the NoiseGeneratorApp instance
     root.protocol(
         "WM_DELETE_WINDOW", app.on_close
@@ -465,12 +528,12 @@ def tkinter_app(queue1, lock, ard_queue, ard_lock, nr_processes):
 #     tkinter_app(Queue())
 
 
-def load_noise_info(file):
+def load_noise_info(file: str | Path):
     """
     Load the noise .h5 file and return the noise data, width, height, frames and frame rate.
     Parameters
     ----------
-    file : str
+    file : str | Path
         Path to the noise file.
     Returns
     -------

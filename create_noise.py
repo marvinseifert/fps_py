@@ -1,6 +1,6 @@
 import numpy as np
 import h5py
-import blosc
+from pathlib import Path
 import hdf5plugin
 
 
@@ -63,7 +63,12 @@ def generate_checkerboard_pattern(checker_size, width_in_pixels, height_in_pixel
 
 # %%
 def generate_and_store_3d_array(
-    frames, checkerboard_size, width_in_pixels, height_in_pixels, fps, name="Noise.h5"
+    frames: int,
+    checkerboard_size: int,
+    width_in_pixels: int,
+    height_in_pixels: int,
+    fps: int,
+    name: str | Path = "Noise.h5",
 ):
     """Generate a 3D array of checkerboard patterns and store it in an HDF5 file.
     Parameters

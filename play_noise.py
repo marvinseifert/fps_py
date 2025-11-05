@@ -12,7 +12,7 @@ from multiprocessing import sharedctypes
 import pyglet
 from arduino import Arduino
 import threading
-
+import pydevd_pycharm
 
 class Presenter:
     """
@@ -32,6 +32,8 @@ class Presenter:
         lock,
         ard_queue,
         ard_lock,
+        status_queue,
+        status_lock,
         mode,
         delay=10,
     ):
@@ -65,9 +67,12 @@ class Presenter:
         self.mode = mode
         self.ard_queue = ard_queue
         self.ard_lock = ard_lock
+        self.status_queue = status_queue
+        self.status_lock = status_lock
         self.nr_followers = len(config_dict["windows"].keys()) - 1
         self.c_channels = config_dict["windows"][str(self.process_idx)]["channels"]
         self.delay = delay
+        self.arduino_running = False
         settings.WINDOW[
             "class"
         ] = "moderngl_window.context.pyglet.Window"  # using a pyglet window
@@ -122,12 +127,13 @@ class Presenter:
 
 
         """
+
         # if self.mode == "lead":
         #     self.arduino.send("W")
         while not self.window.is_closing:
             self.window.use()
             # self.window.ctx.clear(0.5, 0.5, 0.5, 1.0)  # Clear the window with a grey background
-            self.window.ctx.clear(1, 1, 1, 1.0)
+            self.window.ctx.clear(0, 0, 0, 1.0)
 
             self.window.swap_buffers()  # Swap the buffers (update the window content)
             self.communicate()  # Check for commands from the main process (gui)
@@ -145,23 +151,46 @@ class Presenter:
 
         if command:
             if type(command) == dict:  # This would be an array to play.
+                self.stop = False
                 self.play_noise(command)
             elif command == "white_screen":
+                self.stop = False
                 if self.mode == "lead":
                     with self.ard_lock:
                         ard_command = self.ard_queue.get()
                         self.send_colour(ard_command)
+                        self.arduino_running = True
+                        arduino_thread = threading.Thread(
+                            target=self.receive_arduino_status
+                        )
+                        arduino_thread.start()
 
             elif command == "stop":  # If the command is "stop", stop the presentation
-                self.stop = True  # Trigger the stop flag for next time
+                self.arduino_running = False  # Trigger the stop flag for next time
+                self.status_queue.put("done")
                 if self.mode == "lead":
                     self.send_colour("b")
                     self.send_colour("b")
                     self.send_colour("b")
                     self.send_colour("O")
-                self.run_empty()
+                self.stop = True
+                current_time = time.perf_counter()
+                while time.perf_counter() - current_time < 1:
+                    pass
             elif command == "destroy":
                 self.window.close()  # Close the window
+
+    def receive_arduino_status(self):
+        buffer = True
+        self.arduino.arduino.reset_input_buffer()
+        while not self.stop:
+            status = self.arduino.read()
+            if status == "Trigger":
+                buffer = False
+            if status == "finished" and not buffer:
+                self.arduino_running = False
+                self.status_queue.put("done")
+                break
 
     def send_array(self, array):
         """Send array string of shared memory to other processes"""
@@ -176,6 +205,11 @@ class Presenter:
         """Send a trigger signal to the Arduino."""
         if self.mode == "lead":
             self.arduino.send("T")
+
+    def switch_trigger_modes(self, mode="t_s_off"):
+        """Switch the trigger mode of the Arduino."""
+        if self.mode == "lead":
+            self.arduino.send(mode)
 
     def send_colour(self, colour):
         """Send a colour signal to the Arduino."""
@@ -453,6 +487,9 @@ class Presenter:
         for idx, current_pattern_index in enumerate(pattern_indices):
             self.communicate()  # Custom function for communication, can be modified as needed
             if self.stop:
+                del patterns
+                del program
+                del vao
                 return end_times
             # Sync frame presentation to the scheduled time
             while time.perf_counter() < s_frames[idx]:
@@ -462,9 +499,8 @@ class Presenter:
 
             # Handle colour change logic
             if current_pattern_index % change_logic == 0:
-                c = arduino_colours[
-                    current_pattern_index // change_logic % len(arduino_colours)
-                ]
+                c = arduino_colours[current_pattern_index]
+
                 self.send_colour(c)  # Custom function to send colour to Arduino
 
             # Clear the window and render the noise
@@ -519,10 +555,12 @@ class Presenter:
         # Release all pattern textures
         for pattern in patterns:
             pattern.release()
-
+        del patterns
         # Release the buffer and vertex array object
         vbo.release()
         vao.release()
+        del vbo
+        del vao
 
         # Check which frames were dropped
         dropped_frames = np.where(end_times - (1 / desired_fps) > 0)
@@ -543,7 +581,7 @@ class Presenter:
 
         # Run any additional emptying or resetting procedures
         self.stop = False
-        self.run_empty()  # Assuming 'run_empty' is a method for final procedures
+        return
 
     def play_noise(self, noise_dict):
         """
@@ -566,7 +604,7 @@ class Presenter:
         ) = self.load_and_initialize_data(noise_dict)
 
         arduino_colours = self.process_arduino_colours(
-            arduino_colours, change_logic, len(s_frames)
+            arduino_colours, change_logic, len(s_frames) - 1
         )
 
         # Load the noise data
@@ -611,6 +649,7 @@ class Presenter:
         print(f"Current time is {datetime.datetime.now()}")
         end_times = np.zeros(len(s_frames))
         # Start the presentation loop
+        self.switch_trigger_modes("t_s_on")
         end_times = self.presentation_loop(
             pattern_indices,
             s_frames,
@@ -622,13 +661,12 @@ class Presenter:
             program,
             vao,
         )
+        self.switch_trigger_modes("t_s_off")
 
         # Clean up and finalize the presentation
         self.cleanup_and_finalize(
             patterns, vbo, vao, noise_dict, end_times, desired_fps
         )
-
-
 
 
 def write_log(noise_dict, dropped_frames=None, wrong_frame_times=None):
@@ -743,6 +781,8 @@ def pyglet_app_lead(
     lock,
     ard_queue,
     ard_lock,
+    status_queue,
+    status_lock,
     delay=10,
 ):
     """
@@ -774,6 +814,8 @@ def pyglet_app_lead(
         lock,
         ard_queue,
         ard_lock,
+        status_queue,
+        status_lock,
         mode="lead",
         delay=delay,
     )

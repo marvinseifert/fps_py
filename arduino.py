@@ -34,18 +34,34 @@ class Arduino:
         if self.connected:
             txt = f"\n{message}\n".encode("utf-8")  # Convert the colour string to bytes
             self.arduino.write(txt)
+            self.arduino.flush()
         else:
             self.connect()
             if self.connected:
                 txt = f"\n{message}\n".encode("utf-8")
                 self.arduino.write(txt)
+                self.arduino.flush()
             else:
                 print("Could not connect to Arduino or send message")
 
     def read(self):
-        if self.connected:
-            text = self.arduino.readline(-1)
-            return text
+        if not self.connected:
+            return None
+        last_line = None
+        try:
+            available = getattr(self.arduino, "in_waiting", 0)
+            if available and available > 0:
+                data = self.arduino.read(available)
+                decoded = data.decode("utf-8", errors="ignore")
+                lines = [ln.strip() for ln in decoded.splitlines() if ln.strip()]
+                if lines:
+                    last_line = lines[-1]
+        finally:
+            try:
+                self.arduino.reset_input_buffer()
+            except Exception:
+                pass
+        return last_line
 
     def disconnect(self):
         self.arduino.close()
