@@ -14,13 +14,15 @@ h5py = "^3.9.0"
 moderngl = "^5.9.0"
 moderngl-window = "^2.4.5"
 opencv-python = "^4.8.1.78"
-blosc = "^1.11.1"
+blosc = "^1.11.3"
 hdf5plugin = "^4.2.0"
 matplotlib = "^3.8.0"
 scipy = "^1.11.3"
 stimupy = "^1.1.1"
 paramiko = "^3.5.1"
 scpclient = "^0.7"
+debugpy = "^1.8.16"
+pydevd-pycharm = ">=252.23892.515,<252.23893.0"
 
 
 [build-system]
