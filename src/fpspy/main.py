@@ -1,6 +1,6 @@
 """
 This is the main file for the project. It starts two processes, one for the GUI and one
-for the noise presentation. The GUI is implemented using tkinter and the noise
+for the stimulus presentation. The GUI is implemented using tkinter and the stimulus
 presentation is implemented using pyglet.
 
 Author: Marvin Seifert
@@ -54,7 +54,7 @@ def run(
     # Delay between loading the stimulus and the start of the presentation, in seconds.
     presentation_delay = 10  
 
-    # Start the GUI and the noise presentation in separate processes.
+    # Start the GUI and the stimulus presentation in separate processes.
     queue1 = Queue()  # Queue for communication between all processes.
     sync_queue = (
         Queue()

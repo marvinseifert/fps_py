@@ -240,18 +240,18 @@ class NoiseGeneratorApp:
         button_frame = ttk.Frame(self.right_frame)
         button_frame.grid(row=0, column=0, columnspan=2, pady=5, sticky=tk.W)
 
-        self.play_noise = ttk.Button(
+        self.play_stim = ttk.Button(
             button_frame,
-            text="play noise",
-            command=self.on_play_noise,
+            text="play stimulus",
+            command=self.on_play_stim,
             style="Play.TButton",
         )
-        self.play_noise.pack(side=tk.LEFT, padx=5)
+        self.play_stim.pack(side=tk.LEFT, padx=5)
 
-        self.stop_noise = ttk.Button(
-            button_frame, text="stop noise", command=self.on_stop_noise
+        self.stop_stim = ttk.Button(
+            button_frame, text="stop stimulus", command=self.on_stop_stim
         )
-        self.stop_noise.pack(side=tk.LEFT, padx=5)
+        self.stop_stim.pack(side=tk.LEFT, padx=5)
 
         self.refresh_button = ttk.Button(
             button_frame, text="refresh", command=self.refresh_file_list
@@ -330,18 +330,18 @@ class NoiseGeneratorApp:
         # Reset the button text
         self.generate_noise_button.config(text="Generate Noise")
 
-    def on_play_noise(self):
-        """Play the selected noise file."""
+    def on_play_stim(self):
+        """Play the selected stimulus file."""
 
         # Check selected file in the file_listbox
         index = self.file_listbox.curselection()
-        noise_name = self.file_listbox.get(index[0])
-        noise_path = fpspy.config.user_stimuli_dir(self.config) / noise_name
-        _, _, frames, frame_rate = load_noise_info(noise_path)
+        stim_name = self.file_listbox.get(index[0])
+        stim_path = fpspy.config.user_stimuli_dir(self.config) / stim_name
+        _, _, frames, frame_rate = load_stim_info(stim_path)
         s_frames = schedule_frames(frames, frame_rate)
 
         queue_data = {
-            "file": noise_name,
+            "file": stim_name,
             "loops": int(self.loop_entry.get()),
             "colours": self.colours.get(),
             "change_logic": int(self.colour_change.get()),
@@ -351,15 +351,15 @@ class NoiseGeneratorApp:
             for _ in range(self.nr_processes):
                 self.queue1.put(
                     queue_data
-                )  # Put the noise name in the queue for each window thread to read
+                )  # Put the stimulus name in the queue for each window thread to read.
         self.arduino_running = True
         # self.arduino_light.config(bg="green")
         # # change text of the button
         # self.arduino_light.config(text="Stim running")
 
 
-    def on_stop_noise(self):
-        """Stop the noise playback."""
+    def on_stop_stim(self):
+        """Stop the stimulus playback."""
         with self.lock:
             for _ in range(self.nr_processes):
                 self.queue1.put(
@@ -628,25 +628,25 @@ def tkinter_app(
 #     tkinter_app(Queue())
 
 
-def load_noise_info(path: str):
-    """Load the noise and metadata (width, height, frames, frame rate) from .h5 file.
+def load_stim_info(path: str):
+    """Load the stimulus and metadata (width, height, frames, frame rate) from .h5 file.
 
     Parameters
     ----------
     file : str | Path
-        Path to the noise file.
+        Path to the stimulus file.
     Returns
     -------
-    noise : np.ndarray
+    stimulus : np.ndarray
         Noise data.
     width : int
-        Width of the noise.
+        Width of each frame.
     height : int
-        Height of the noise.
+        Height of each frame.
     frames : int
-        Number of frames in the noise.
+        Number of frames in the stimulus.
     frame_rate : int
-        Frame rate of the noise.
+        Frame rate of the stimulus.
 
     """
     with h5py.File(path, "r") as f:

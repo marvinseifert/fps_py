@@ -6,7 +6,8 @@ fps = 75
 
 # --- Arduino settings ---
 [arduino]
-port = "/dev/ttyUSB0"
+# port = "/dev/ttyUSB0"
+port = "dummy"
 baud_rate = 9600
 trigger_command = "T"
 
