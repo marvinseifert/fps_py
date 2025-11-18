@@ -1,25 +1,28 @@
-import moderngl_window
-import moderngl
-from moderngl_window.conf import settings
+import csv
+import datetime
+from pathlib import Path
+import threading
 import time
 import h5py
 import numpy as np
-from pathlib import Path
-import csv
-import datetime
-from multiprocessing import RawArray
-from multiprocessing import sharedctypes
+import moderngl
+import moderngl_window
+from moderngl_window.conf import settings
 import pyglet
 from arduino import Arduino, DummyArduino
 import threading
+import importlib.resources
+import fpspy.arduino
+import fpspy.config
+#import pydevd_pycharm
 
 
 class Presenter:
     """
-    This class is responsible for presenting the stimuli. It is a wrapper around the pyglet window class and the
-    moderngl_window BaseWindow class. It is responsible for loading the noise stimuli and presenting them. It is also
-    responsible for communicating with the main process (gui) via a queue.
-
+    This class is responsible for presenting the stimuli. It is a wrapper around the
+    pyglet window class and the moderngl_window BaseWindow class. It is responsible for
+    loading the noise stimuli and presenting them. It is also responsible for
+    communicating with the main process (gui) via a queue.
     """
 
     def __init__(
@@ -52,14 +55,15 @@ class Presenter:
                 "window_size" : tuple
                     Size of the window.
                 "fullscreen" : bool
-                    Whether to use fullscreen mode or not. Fullscreen is currently only working on the
-                    main monitor.
+                    Whether to use fullscreen mode or not. Fullscreen is currently only
+                    working on the main monitor.
 
         queue : multiprocessing.Queue
             Queue for communication with the main process (gui).
 
         """
         self.process_idx = process_idx
+        self.config_dict = config_dict
         self.queue = queue
         self.sync_queue = sync_queue
         self.sync_lock = sync_lock
@@ -70,33 +74,36 @@ class Presenter:
         self.status_queue = status_queue
         self.status_lock = status_lock
         self.nr_followers = len(config_dict["windows"].keys()) - 1
-        self.c_channels = config_dict["windows"][str(self.process_idx)]["channels"]
+        self.c_channels = config_dict["windows"][str(self.process_idx)][
+            "channels"
+        ]
         self.delay = delay
         self.arduino_running = False
-
-        settings.WINDOW[
-            "class"
-        ] = "moderngl_window.context.pyglet.Window"  # using a pyglet window
+        settings.WINDOW["class"] = (
+            "moderngl_window.context.pyglet.Window"  # using a pyglet window
+        )
         settings.WINDOW["gl_version"] = config_dict["gl_version"]
         settings.WINDOW["size"] = config_dict["windows"][str(self.process_idx)][
             "window_size"
         ]
-        settings.WINDOW[
-            "aspect_ratio"
-        ] = None  # Sets the aspect ratio to the window's aspect ratio
-        settings.WINDOW["fullscreen"] = config_dict["windows"][str(self.process_idx)][
-            "fullscreen"
-        ]
+        settings.WINDOW["aspect_ratio"] = (
+            None  # Sets the aspect ratio to the window's aspect ratio
+        )
+        settings.WINDOW["fullscreen"] = config_dict["windows"][
+            str(self.process_idx)
+        ]["fullscreen"]
         settings.WINDOW["samples"] = 0
         settings.WINDOW["double_buffer"] = True
         settings.WINDOW["vsync"] = True
         settings.WINDOW["resizable"] = False
         settings.WINDOW["title"] = "Noise Presentation"
-        settings.WINDOW["style"] = config_dict["windows"][str(self.process_idx)][
-            "style"
-        ]
+        settings.WINDOW["style"] = config_dict["windows"][
+            str(self.process_idx)
+        ]["style"]
 
-        self.frame_duration = 1 / config_dict["fps"]  # Calculate the frame duration
+        self.frame_duration = (
+            1 / config_dict["fps"]
+        )  # Calculate the frame duration
 
         self.window = moderngl_window.create_window_from_settings()
         self.window.position = (
@@ -108,11 +115,10 @@ class Presenter:
         self.window.set_default_viewport()  # Set the viewport to the window size
 
         if self.mode == "lead" and not config_dict["windows"][str(self.process_idx)]["arduino_port"] == "dummy":
-            self.arduino = Arduino(
-                port=config_dict["windows"][str(self.process_idx)]["arduino_port"],
-                baud_rate=config_dict["windows"][str(self.process_idx)][
-                    "arduino_baud_rate"
-                ],
+            self.arduino = fpspy.arduino.Arduino(
+                port=fpspy.config.get_arduino_port(config_dict),
+                baud_rate=fpspy.config.get_arduino_baud_rate(config_dict),
+                trigger_command=fpspy.config.get_arduino_trigger_command(config_dict),
                 queue=ard_queue,
                 queue_lock=ard_lock,
             )
@@ -142,9 +148,8 @@ class Presenter:
 
     def run_empty(self):
         """
-        Empty loop. Establishes a window filled with a grey background. Waits for commands from the main process (gui).
-
-
+        Empty loop. Establishes a window filled with a grey background. Waits for
+        commands from the main process (gui).
         """
 
         # if self.mode == "lead":
@@ -160,9 +165,7 @@ class Presenter:
         self.window.close()  # Close the window in case it is closed by the user
 
     def communicate(self):
-        """
-        Check for commands from the main process (gui). If a command is found, execute it.
-        """
+        """Check and execute commands from the main process (gui)."""
         command = None
         with self.lock:
             if not self.queue.empty():
@@ -183,9 +186,7 @@ class Presenter:
                         target=self.receive_arduino_status
                     )
                     arduino_thread.start()
-
             elif command == "stop":  # If the command is "stop", stop the presentation
-
                 self.arduino_running = False  # Trigger the stop flag for next time
                 if self.mode == "lead":
                     self.status_queue.put("done")
@@ -222,8 +223,8 @@ class Presenter:
 
     def send_trigger(self):
         """Send a trigger signal to the Arduino."""
-
-        self.arduino.send("T")
+        if self.mode == "lead":
+            self.arduino.send_trigger()
 
     def switch_trigger_modes(self, mode="t_s_off"):
         """Switch the trigger mode of the Arduino."""
@@ -259,6 +260,7 @@ class Presenter:
         colours = noise_dict["colours"]
         change_logic = noise_dict["change_logic"]
         s_frames_temp = noise_dict["s_frames"]
+        noise_path = fpspy.config.user_stimuli_dir(self.config_dict) / file
 
         # Copy and modify s_frames based on loops
         s_frames = s_frames_temp.copy()
@@ -268,11 +270,12 @@ class Presenter:
                 (
                     s_frames,
                     s_frames_temp
-                    + loop * (s_frames_temp[-1] - s_frames_temp[0] + first_frame_dur),
+                    + loop
+                    * (s_frames_temp[-1] - s_frames_temp[0] + first_frame_dur),
                 )
             )
 
-        return file, loops, colours, change_logic, s_frames
+        return noise_path, loops, colours, change_logic, s_frames
 
     def process_arduino_colours(self, colours, change_logic, frames):
         """
@@ -299,7 +302,7 @@ class Presenter:
 
         return colours
 
-    def load_noise_data(self, file):
+    def load_noise_data(self, path):
         """
         Loads the noise data from a file and establishes textures for each noise frame.
 
@@ -322,7 +325,7 @@ class Presenter:
             desired_fps,
             nr_colours,
         ) = load_3d_patterns(
-            file, channels=self.c_channels
+            path, channels=self.c_channels
         )  # Load the noise data
 
         # Establish the texture for each noise frame
@@ -337,7 +340,15 @@ class Presenter:
             for i in range(frames)
         ]
 
-        return all_patterns_3d, width, height, frames, desired_fps, patterns, nr_colours
+        return (
+            all_patterns_3d,
+            width,
+            height,
+            frames,
+            desired_fps,
+            patterns,
+            nr_colours,
+        )
 
     def setup_shader_program(self, nr_colours=1):
         """
@@ -349,18 +360,20 @@ class Presenter:
             The compiled and linked shader program.
         """
         # Load and compile vertex and fragment shaders
-        with open("vertex_shader.glsl", "r") as vertex_file:
+        resource_dir = importlib.resources.files("fpspy.resources")
+        with (resource_dir / "vertex_shader.glsl").open("r") as vertex_file:
             vertex_shader_source = vertex_file.read()
         if nr_colours == 1:
-            with open("fragment_shader.glsl", "r") as fragment_file:
+            with (resource_dir / "fragment_shader.glsl").open("r") as fragment_file:
                 fragment_shader_source = fragment_file.read()
         else:
-            with open("fragment_shader_colour.glsl", "r") as fragment_file:
+            with (resource_dir / "fragment_shader_colour.glsl").open("r") as fragment_file:
                 fragment_shader_source = fragment_file.read()
 
         # Create and return the shader program
         program = self.window.ctx.program(
-            vertex_shader=vertex_shader_source, fragment_shader=fragment_shader_source
+            vertex_shader=vertex_shader_source,
+            fragment_shader=fragment_shader_source,
         )
 
         return program
@@ -536,9 +549,9 @@ class Presenter:
             self.window.ctx.clear(0, 0, 0)
             patterns[current_pattern_index].use(location=0)
             if nr_colours > 1:
-                program[
-                    "pattern"
-                ].red = 0  # Assuming 'pattern' is the uniform name in shader
+                program["pattern"].red = (
+                    0  # Assuming 'pattern' is the uniform name in shader
+                )
                 program["pattern"].green = 0
                 program["pattern"].blue = 0
             else:
@@ -621,19 +634,26 @@ class Presenter:
         return
 
     def play_noise(self, noise_dict):
-        """
-        Play the noise file. This function loads the noise file, creates a texture from it and presents it.
+        """Play the noise file.
+
+        This function loads the noise file, creates a texture from it and presents it.
+
         Parameters
         ----------
-        file : str
-
-            Path to the noise file.
+        noise_dict : dict
+            A dictionary sent via Queue from the main process (gui). Contains:
+            - file : str
+                Path to the noise file.
+            - loops
+            - argduino_colours
+            - change_logic
+            - s_frames
 
         """
         # p
         # Get the data according to the noise_dict
         (
-            file,
+            noise_path,
             loops,
             arduino_colours,
             change_logic,
@@ -653,7 +673,7 @@ class Presenter:
             desired_fps,
             patterns,
             nr_colours,
-        ) = self.load_noise_data(file)
+        ) = self.load_noise_data(noise_path)
 
         # Establish the shader program for presenting the noise
         program = self.setup_shader_program(nr_colours)
@@ -718,9 +738,7 @@ def write_log(noise_dict, dropped_frames=None, wrong_frame_times=None):
     loops = noise_dict["loops"]
     colours = noise_dict["colours"]
     change_logic = noise_dict["change_logic"]
-    filename_format = (
-        f"logs/{file}_{datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S.csv')}"
-    )
+    filename_format = fpspy.config.user_log_dir() / f"{file}_{datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S.csv')}"
 
     if dropped_frames is None:
         dropped_frames = []
@@ -752,7 +770,7 @@ def write_log(noise_dict, dropped_frames=None, wrong_frame_times=None):
         )
 
 
-def load_3d_patterns(file, channels=None):
+def load_3d_patterns(path, channels=None):
     """
     Load the noise .h5 file and return the noise data, width, height, frames and frame rate.
     Parameters
@@ -773,7 +791,7 @@ def load_3d_patterns(file, channels=None):
         Frame rate of the noise.
 
     """
-    with h5py.File(f"stimuli/{file}", "r") as f:
+    with h5py.File(path, "r") as f:
         noise = np.asarray(f["Noise"][:], dtype=np.uint8)
         frame_rate = f["Frame_Rate"][()]
 
@@ -798,8 +816,8 @@ def load_3d_patterns(file, channels=None):
     return noise, width, height, frames, frame_rate, colours
 
 
-def get_noise_info(file):
-    with h5py.File(f"stimuli/{file}", "r") as f:
+def get_noise_info(path):
+    with h5py.File(path, "r") as f:
         noise = f["Noise"][:]
         frame_rate = f["Frame_Rate"][()]
     size = noise.shape

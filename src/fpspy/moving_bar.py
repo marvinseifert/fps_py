@@ -2,7 +2,6 @@ import numpy as np
 from scipy.ndimage import binary_dilation
 import h5py
 import hdf5plugin
-import blosc
 from scipy.ndimage import rotate
 
 
@@ -27,7 +26,8 @@ def generate_stimulus(nt, bar_width):
     - bar_width: int, width of the bar
 
     Returns:
-    - stimulus: np.array, array of shape (nt*8*10, 600, 600) containing the stimulus frames
+    - stimulus: np.array, array of shape (nt*8*10, 600, 600) containing the stimulus
+      frames.
     """
     # Total number of stimuli (8 directions x 10 repetitions)
     repeats = 1
@@ -52,28 +52,16 @@ def generate_stimulus(nt, bar_width):
 
 
 def create_large_diagonal_bar(frame_size, width, orientation):
-    """
-
-    Create a large diagonal bar that can cover the entire frame when shifted.
-
-
+    """Create a large diagonal bar that can cover the entire frame when shifted.
 
     Parameters:
-
     - frame_size: tuple, (height, width) of the frame
-
     - width: int, width of the bar
-
     - orientation: str, one of ["diagonal_right", "diagonal_left"]
 
-
-
     Returns:
-
     - large_bar: np.array, a large frame with a diagonal bar
-
     """
-
     # Creating a large frame to ensure the bar can traverse the entire frame diagonally
 
     large_frame = np.zeros(
@@ -169,7 +157,12 @@ def move_bar_optimized(nt, width, direction, speed=2):
             # Rotate the frame
             angle = DIRECTIONS[direction][2]
             frame_ext = rotate(
-                frame_ext, angle, reshape=False, order=0, mode="constant", cval=0
+                frame_ext,
+                angle,
+                reshape=False,
+                order=0,
+                mode="constant",
+                cval=0,
             )
         elif direction in ["up-right", "down-right"]:
             # Create a vertical bar
@@ -177,7 +170,12 @@ def move_bar_optimized(nt, width, direction, speed=2):
             # Rotate the frame
             angle = DIRECTIONS[direction][2]
             frame_ext = rotate(
-                frame_ext, angle, reshape=False, order=0, mode="constant", cval=0
+                frame_ext,
+                angle,
+                reshape=False,
+                order=0,
+                mode="constant",
+                cval=0,
             )
         elif "up" in direction or "down" in direction:
             frame_ext[pos_y : pos_y + width, :] = 1

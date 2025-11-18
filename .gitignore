@@ -1,0 +1,25 @@
+
+# IDE and editor files
+.idea
+.vscode/
+*.swp
+*.swo
+*~
+CLAUDE.md
+.claude
+.editorconfig
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.installed.cfg
+*.egg
+
+venv/
+.pytest_cache/
+poetry.lock
+

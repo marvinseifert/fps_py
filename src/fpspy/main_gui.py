@@ -1,22 +1,25 @@
 """
 This file contains code for the GUI application which runs in a separate process.
-It allows the user to generate noise patterns, play them, and send commands to an Arduino device.
-The GUI is built using tkinter and uses multiprocessing for inter-process communication.
+It allows the user to generate noise patterns, play them, and send commands to an
+Arduino device. The GUI is built using tkinter and uses multiprocessing for
+inter-process communication.
+
 @ Marvin Seifert, 2024
 """
-
 
 import contextlib
 import threading
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
-import create_noise
-from multiprocessing import Process, Queue
+from multiprocessing import Queue
+import fpspy.config
+import fpspy.help_dialog
 import h5py
-import shuffle_noise
 import time
 import numpy as np
+import fpspy.create_noise
+import fpspy.shuffle_noise
 
 
 class NoiseGeneratorApp:
@@ -25,6 +28,7 @@ class NoiseGeneratorApp:
     def __init__(
         self,
         root: tk.Tk,
+        config: dict,
         queue1: Queue,
         lock: threading.Lock,
         ard_queue: Queue,
@@ -43,6 +47,7 @@ class NoiseGeneratorApp:
 
         """
 
+        self.config = config
         self.lock = lock
         self.queue1 = queue1
         self.ard_queue = ard_queue
@@ -164,6 +169,12 @@ class NoiseGeneratorApp:
         )
         self.shuffle_box.grid(row=5, column=0, pady=0, padx=0)
 
+        # Help button at bottom left
+        self.help_button = ttk.Button(
+            self.left_frame, text="help", command=self.show_help
+        )
+        self.help_button.grid(row=10, column=0, pady=10, padx=0, sticky=tk.W)
+
         # 2. Widgets for the right frame
         self.root.grid_rowconfigure(0, weight=1)
         self.right_frame.grid_columnconfigure(
@@ -243,9 +254,14 @@ class NoiseGeneratorApp:
         self.stop_noise.pack(side=tk.LEFT, padx=5)
 
         self.refresh_button = ttk.Button(
-            button_frame, text="Refresh", command=self.refresh_file_list
+            button_frame, text="refresh", command=self.refresh_file_list
         )
         self.refresh_button.pack(side=tk.LEFT, padx=5)
+
+        self.change_data_dir_button = ttk.Button(
+            button_frame, text="change data dir", command=self.change_data_directory
+        )
+        self.change_data_dir_button.pack(side=tk.LEFT, padx=5)
 
         # Selected file info label
         self.selected_file_info_label = ttk.Label(
@@ -283,7 +299,7 @@ class NoiseGeneratorApp:
             )
             file_name = file_name_path.stem  # Get the filename without any suffix
         file_name += ".h5"
-        complete_file_name = Path("stimuli", file_name)
+        complete_file_name = fpspy.config.user_stimuli_dir(self.config) / file_name
 
         # Calculate number of frames needed
         frames = int(noise_duration * 60 * noise_frequency)
@@ -292,7 +308,7 @@ class NoiseGeneratorApp:
 
         # Call the function to generate the noise
         if self.shuffle.get() == 0:
-            create_noise.generate_and_store_3d_array(
+            fpspy.create_noise.generate_and_store_3d_array(
                 frames,
                 checkerboard_size,
                 width,
@@ -301,7 +317,7 @@ class NoiseGeneratorApp:
                 name=complete_file_name,
             )
         else:
-            shuffle_noise.generate_and_store_3d_array(
+            fpspy.shuffle_noise.generate_and_store_3d_array(
                 frames,
                 checkerboard_size,
                 width,
@@ -320,8 +336,8 @@ class NoiseGeneratorApp:
         # Check selected file in the file_listbox
         index = self.file_listbox.curselection()
         noise_name = self.file_listbox.get(index[0])
-
-        _, _, frames, frame_rate = load_noise_info(noise_name)
+        noise_path = fpspy.config.user_stimuli_dir(self.config) / noise_name
+        _, _, frames, frame_rate = load_noise_info(noise_path)
         s_frames = schedule_frames(frames, frame_rate)
 
         queue_data = {
@@ -354,7 +370,7 @@ class NoiseGeneratorApp:
     def refresh_file_list(self):
         """Refresh the list of .h5py files in the stimuli directory."""
 
-        stimuli_dir = Path("stimuli")
+        stimuli_dir = fpspy.config.user_stimuli_dir(self.config)
 
         if stimuli_dir.is_dir():
             files = [f.name for f in stimuli_dir.iterdir() if f.suffix == ".h5"]
@@ -380,14 +396,15 @@ class NoiseGeneratorApp:
                 file_name = self.file_listbox.get(index[0])
 
                 # Get some info about the selected file and display it:
-                with h5py.File(Path("stimuli", file_name), "r") as f:
+                with h5py.File(fpspy.config.user_stimuli_dir(self.config) / file_name, "r") as f:
                     noise_size = f["Noise"].shape
                     fps = f["Frame_Rate"][()]
                     checkerboard_size = f["Checkerboard_Size"][()]
                     shuffle = f["Shuffle"][()]
                 duration = noise_size[0] / fps / 60
                 self.selected_file_info_var.set(
-                    f"size: {checkerboard_size}, fps: {fps}, time: {duration:.2f} min, shuffle: {shuffle}"
+                    f"size: {checkerboard_size}, fps: {fps}, time: {duration:.2f} min, "
+                    f"shuffle: {shuffle}"
                 )
                 self.style.configure(
                     "Play.TButton", background="green"
@@ -483,6 +500,86 @@ class NoiseGeneratorApp:
         #     self.status_queue.get()
         # self.arduino_light.config(bg="red")
 
+    def show_help(self):
+        """Show help dialog with directory information."""
+        fpspy.help_dialog.show_directories_help(self.root, self.config)
+
+    def change_data_directory(self):
+        """Open dialog to change the data directory and save to config."""
+        current_data_dir = Path(self.config["paths"]["data_dir"])
+
+        # Create custom dialog window
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Select Data Directory")
+        dialog.geometry("500x150")
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Center the dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+        # Current directory display
+        current_var = tk.StringVar(value=str(current_data_dir))
+        ttk.Label(dialog, text="Current data directory:").pack(pady=5)
+        current_entry = ttk.Entry(dialog, textvariable=current_var, width=60, state="readonly")
+        current_entry.pack(pady=5)
+
+        # Button frame
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(pady=10)
+
+        result = [None]  # Use list to allow modification in nested functions
+
+        def select_directory():
+            new_dir = filedialog.askdirectory(
+                title="Select Data Directory",
+                initialdir=current_var.get(),
+                parent=dialog
+            )
+            if new_dir:
+                current_var.set(new_dir)
+
+        def use_default():
+            default_dir = fpspy.config.default_data_dir()
+            current_var.set(str(default_dir))
+
+        def apply_changes():
+            new_path = Path(current_var.get())
+            result[0] = new_path
+            dialog.destroy()
+
+        def cancel():
+            dialog.destroy()
+
+        # Buttons
+        ttk.Button(button_frame, text="Browse...", command=select_directory).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Use Default", command=use_default).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Apply", command=apply_changes).pack(side=tk.LEFT, padx=10)
+        ttk.Button(button_frame, text="Cancel", command=cancel).pack(side=tk.LEFT, padx=5)
+
+        # Wait for dialog to close
+        self.root.wait_window(dialog)
+
+        # Process result
+        if result[0] and result[0] != current_data_dir:
+            # Update the config
+            self.config["paths"]["data_dir"] = str(result[0])
+
+            # Save to user config file
+            fpspy.config.save_user_config(self.config)
+
+            # Refresh the file list to show files from new directory
+            self.refresh_file_list()
+
+            messagebox.showinfo(
+                "Data Directory Changed",
+                f"Data directory changed to:\n{result[0]}\n\nStimuli will now be saved to:\n{result[0] / 'stimuli'}"
+            )
+
     def on_close(self):
         """Called when the window is closed."""
         # Can add cleanup here if needed
@@ -503,9 +600,11 @@ class NoiseGeneratorApp:
 
 
 def tkinter_app(
-    queue1, lock, ard_queue, ard_lock, status_queue, status_lock, nr_processes
+    config, queue1, lock, ard_queue, ard_lock, status_queue, status_lock, nr_processes
 ):
-    """Create the tkinter GUI and run the mainloop. Used to run the GUI in a separate process.
+    """Create the tkinter GUI and run the mainloop. Used to run the GUI in a separate
+    process.
+
     Parameters
     ----------
     queue : multiprocessing.Queue
@@ -514,7 +613,7 @@ def tkinter_app(
 
     root = tk.Tk()  # Create the root window
     app = NoiseGeneratorApp(
-        root, queue1, lock, ard_queue, ard_lock, status_queue, status_lock, nr_processes
+        root, config, queue1, lock, ard_queue, ard_lock, status_queue, status_lock, nr_processes
     )  # Create the NoiseGeneratorApp instance
     root.protocol(
         "WM_DELETE_WINDOW", app.on_close
@@ -529,9 +628,9 @@ def tkinter_app(
 #     tkinter_app(Queue())
 
 
-def load_noise_info(file: str | Path):
-    """
-    Load the noise .h5 file and return the noise data, width, height, frames and frame rate.
+def load_noise_info(path: str):
+    """Load the noise and metadata (width, height, frames, frame rate) from .h5 file.
+
     Parameters
     ----------
     file : str | Path
@@ -550,7 +649,7 @@ def load_noise_info(file: str | Path):
         Frame rate of the noise.
 
     """
-    with h5py.File(f"stimuli/{file}", "r") as f:
+    with h5py.File(path, "r") as f:
         size = f["Noise"][:].shape
         frame_rate = f["Frame_Rate"][()]
 

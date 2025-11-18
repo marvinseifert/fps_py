@@ -7,7 +7,7 @@ import hdf5plugin
 # %%
 
 
-def generate_checkerboard_pattern(checker_size, width_in_pixels, height_in_pixels):
+def checkerboard(checker_size, width_in_pixels, height_in_pixels):
     """
     Generate a checkerboard pattern with a given checker size and dimensions.
 
@@ -89,7 +89,7 @@ def generate_and_store_3d_array(
     """
 
     patterns_list = [
-        generate_checkerboard_pattern(
+        checkerboard(
             checkerboard_size, width_in_pixels, height_in_pixels
         )
         for _ in range(frames)
@@ -116,7 +116,7 @@ def generate_and_store_video(
 ):
     # Generate the patterns as before
     patterns_list = [
-        generate_checkerboard_pattern(
+        checkerboard(
             checkerboard_size, width_in_pixels, height_in_pixels
         )
         for _ in range(frames)
@@ -136,7 +136,7 @@ def generate_and_store_video(
     # Bla
 
 
-def generate_multicolor_checkerboard_pattern(
+def multicolor_checkerboard(
     checker_size, width_in_pixels, height_in_pixels, num_channels=6
 ):
     """

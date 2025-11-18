@@ -1,0 +1,33 @@
+# Default settings loaded by main.py:cli_main if no custom settings are provided.
+
+# --- Global settings ---
+gl_version = [4, 1]
+fps = 75
+
+# --- Arduino settings ---
+[arduino]
+port = "/dev/ttyUSB0"
+baud_rate = 9600
+trigger_command = "T"
+
+
+[paths]
+# Override if you want to work from non-default directory for stimuli etc.
+data_dir = ""
+
+# --- Window definitions ---
+[windows."1"]
+y_shift = 1000
+x_shift = -1080
+window_size = [500, 500]
+fullscreen = false
+style = "transparent"
+channels = [0, 1, 2]
+
+[windows."2"]
+y_shift = 1000
+x_shift = -500
+window_size = [500, 500]
+fullscreen = false
+style = "transparent"
+channels = [0, 1, 2]

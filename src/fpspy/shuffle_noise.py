@@ -1,11 +1,8 @@
-import numpy as np
-import h5py
-from create_noise import (
-    generate_checkerboard_pattern,
-    generate_multicolor_checkerboard_pattern,
-)
-import hdf5plugin
 from pathlib import Path
+import h5py
+import numpy as np
+import fpspy.create_noise
+import hdf5plugin
 
 
 def shuffle_pattern(pattern, checker_size):
@@ -67,7 +64,7 @@ def generate_and_store_3d_array(
 
     # Generate the checkerboard patterns with random shuffling for each frame
     for _ in range(frames):
-        pattern = generate_checkerboard_pattern(
+        pattern = fpspy.create_noise.checkerboard(
             checkerboard_size, width_in_pixels, height_in_pixels
         )
         shuffled_pattern = shuffle_pattern(pattern, checkerboard_size)
@@ -123,7 +120,7 @@ def generate_and_store_3d_array_colour(
 
     # Generate the checkerboard patterns with random shuffling for each frame
     for _ in range(frames):
-        pattern = generate_multicolor_checkerboard_pattern(
+        pattern = fpspy.create_noise.multicolor_checkerboard(
             checkerboard_size,
             width_in_pixels,
             height_in_pixels,
