@@ -12,9 +12,10 @@ def connect_to_arduino(port="COM3", baud_rate=9600):
 
 
 class Arduino:
-    def __init__(self, port="COM3", baud_rate=9600, queue=None, queue_lock=None):
+    def __init__(self, port="COM3", baud_rate=9600, trigger_command="T", queue=None, queue_lock=None):
         self.port = port
         self.baud_rate = baud_rate
+        self.trigger_command = trigger_command
         self.arduino = None
         self.queue = queue
         self.queue_lock = queue_lock
@@ -43,6 +44,10 @@ class Arduino:
                 self.arduino.flush()
             else:
                 print("Could not connect to Arduino or send message")
+
+    def send_trigger(self):
+        """Send a trigger signal to the Arduino."""
+        self.send(self.trigger_command)
 
     def read(self):
         if not self.connected:
