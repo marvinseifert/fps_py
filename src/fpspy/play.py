@@ -12,14 +12,15 @@ import pyglet
 import importlib.resources
 import fpspy.arduino
 import fpspy.config
-#import pydevd_pycharm
+
+# import pydevd_pycharm
 
 
 class Presenter:
     """
     This class is responsible for presenting the stimuli. It is a wrapper around the
     pyglet window class and the moderngl_window BaseWindow class. It is responsible for
-    loading the noise stimuli and presenting them. It is also responsible for
+    loading the stimuli and presenting them. It is also responsible for
     communicating with the main process (gui) via a queue.
     """
 
@@ -116,7 +117,9 @@ class Presenter:
             self.arduino = fpspy.arduino.Arduino(
                 port=fpspy.config.get_arduino_port(config_dict),
                 baud_rate=fpspy.config.get_arduino_baud_rate(config_dict),
-                trigger_command=fpspy.config.get_arduino_trigger_command(config_dict),
+                trigger_command=fpspy.config.get_arduino_trigger_command(
+                    config_dict
+                ),
                 queue=ard_queue,
                 queue_lock=ard_lock,
             )
@@ -164,7 +167,7 @@ class Presenter:
         if command:
             if type(command) == dict:  # This would be an array to play.
                 self.stop = False
-                self.play_noise(command)
+                self.play(command)
             elif command == "white_screen":
                 self.stop = False
                 if self.mode == "lead":
@@ -232,14 +235,14 @@ class Presenter:
         if self.mode == "lead":
             self.arduino.send(colour)
 
-    def load_and_initialize_data(self, noise_dict):
+    def load_and_initialize_data(self, stim_dict):
         """
         Load and initialize data from the provided dictionary.
 
         Parameters
         ----------
-        noise_dict : dict
-            A dictionary containing various settings for noise playback.
+        stim_dict : dict
+            A dictionary containing various settings for stimulus playback.
 
         Returns
         -------
@@ -247,13 +250,13 @@ class Presenter:
             A tuple containing initialized values: file, loops, colours,
             change_logic, s_frames.
         """
-        # Extract parameters from the noise_dict
-        file = noise_dict["file"]
-        loops = noise_dict["loops"]
-        colours = noise_dict["colours"]
-        change_logic = noise_dict["change_logic"]
-        s_frames_temp = noise_dict["s_frames"]
-        noise_path = fpspy.config.user_stimuli_dir(self.config_dict) / file
+        # Extract parameters from the stim_dict
+        file = stim_dict["file"]
+        loops = stim_dict["loops"]
+        colours = stim_dict["colours"]
+        change_logic = stim_dict["change_logic"]
+        s_frames_temp = stim_dict["s_frames"]
+        stim_path = fpspy.config.user_stimuli_dir(self.config_dict) / file
 
         # Copy and modify s_frames based on loops
         s_frames = s_frames_temp.copy()
@@ -268,7 +271,7 @@ class Presenter:
                 )
             )
 
-        return noise_path, loops, colours, change_logic, s_frames
+        return stim_path, loops, colours, change_logic, s_frames
 
     def process_arduino_colours(self, colours, change_logic, frames):
         """
@@ -281,7 +284,7 @@ class Presenter:
         change_logic : int
             The logic determining how often the colour changes.
         frames : int
-            The total number of frames for the noise.
+            The total number of frames for the stimulus.
 
         Returns
         -------
@@ -295,20 +298,21 @@ class Presenter:
 
         return colours
 
-    def load_noise_data(self, path):
+    def load_stim_data(self, path):
         """
-        Loads the noise data from a file and establishes textures for each noise frame.
+        Loads stimulus data from file and creates textures for each frame.
 
         Parameters
         ----------
         file : str
-            The path to the noise file.
+            The path to the stimulus file.
 
         Returns
         -------
         tuple
-            A tuple containing the loaded patterns as a 3D array, the width and height of each pattern,
-            the number of frames, and the desired frames per second (fps).
+            A tuple containing the loaded patterns as a 3D array, the width and height
+            of each pattern, the number of frames, and the desired frames per second
+            (fps).
         """
         (
             all_patterns_3d,
@@ -319,9 +323,9 @@ class Presenter:
             nr_colours,
         ) = load_3d_patterns(
             path, channels=self.c_channels
-        )  # Load the noise data
+        )  # Load the stimulus data
 
-        # Establish the texture for each noise frame
+        # Establish the texture for each stimulus frame
         patterns = [
             self.window.ctx.texture(
                 (width, height),
@@ -357,10 +361,14 @@ class Presenter:
         with (resource_dir / "vertex_shader.glsl").open("r") as vertex_file:
             vertex_shader_source = vertex_file.read()
         if nr_colours == 1:
-            with (resource_dir / "fragment_shader.glsl").open("r") as fragment_file:
+            with (resource_dir / "fragment_shader.glsl").open(
+                "r"
+            ) as fragment_file:
                 fragment_shader_source = fragment_file.read()
         else:
-            with (resource_dir / "fragment_shader_colour.glsl").open("r") as fragment_file:
+            with (resource_dir / "fragment_shader_colour.glsl").open(
+                "r"
+            ) as fragment_file:
                 fragment_shader_source = fragment_file.read()
 
         # Create and return the shader program
@@ -372,8 +380,7 @@ class Presenter:
         return program
 
     def calculate_scaling(self, width, height):
-        """
-        Calculates the scaling factors based on the aspect ratio of the texture and the window.
+        """Calculates scaling factors from texture and window aspect ratios.
 
         Parameters
         ----------
@@ -385,7 +392,7 @@ class Presenter:
         Returns
         -------
         tuple
-            A tuple containing the scaling factors (scale_x, scale_y) and the quad vertices array.
+            A tuple of scaling factors (scale_x, scale_y) and the quad vertices array.
         """
         # Calculate the aspect ratio of the window and the texture
         window_width, window_height = self.window.size
@@ -453,9 +460,9 @@ class Presenter:
         Parameters
         ----------
         frames : int
-            The number of frames in the noise pattern.
+            The number of frames in the stimulus pattern.
         loops : int
-            The number of times the noise pattern should loop.
+            The number of times the stimulus pattern should loop.
         desired_fps : float
             The desired frames per second for the presentation.
 
@@ -492,7 +499,7 @@ class Presenter:
         vao,
     ):
         """
-        Main loop for presenting the noise.
+        Main loop for presenting the stimulus.
 
         Parameters
         ----------
@@ -505,7 +512,7 @@ class Presenter:
         change_logic : int
             Logic to determine when to change the colour.
         patterns : list
-            List of textures for each noise frame.
+            List of textures for each stimulus frame.
         program : moderngl.Program
             The shader program used for rendering.
         vao : moderngl.VertexArray
@@ -531,7 +538,7 @@ class Presenter:
 
                 self.send_colour(c)  # Custom function to send colour to Arduino
 
-            # Clear the window and render the noise
+            # Clear the window and render the stimulus
             self.window.ctx.clear(0, 0, 0)
             patterns[current_pattern_index].use(location=0)
             if nr_colours > 1:
@@ -557,7 +564,7 @@ class Presenter:
                 return end_times
 
     def cleanup_and_finalize(
-        self, patterns, vbo, vao, noise_dict, end_times, desired_fps
+        self, patterns, vbo, vao, stim_dict, end_times, desired_fps
     ):
         """
         Cleans up resources, writes logs, and runs final procedures after the presentation.
@@ -570,8 +577,8 @@ class Presenter:
             The vertex buffer object to be released.
         vao : moderngl.VertexArray
             The vertex array object to be released.
-        noise_dict : dict
-            The dictionary containing noise settings, used for logging purposes.
+        stim_dict : dict
+            The dictionary containing stimulus settings, used for logging purposes.
         end_times : list
             List of frame durations.
         desired_fps : float
@@ -602,26 +609,26 @@ class Presenter:
             print(f"dropped frames (idx): {dropped_frames[0]}")
             print(f"wrong frame times: {wrong_frame_times}")
 
-            # Write log with the noise_dict or any other relevant information
+            # Write log with the stim_dict or any other relevant information
         write_log(
-            noise_dict, dropped_frames, wrong_frame_times
+            stim_dict, dropped_frames, wrong_frame_times
         )  # Assuming 'write_log' is a function for logging
 
         # Run any additional emptying or resetting procedures
         self.stop = False
         return
 
-    def play_noise(self, noise_dict):
-        """Play the noise file.
+    def play(self, stim_dict):
+        """Play the stimulus file.
 
-        This function loads the noise file, creates a texture from it and presents it.
+        This function loads the stimulus file, creates a texture from it and presents it.
 
         Parameters
         ----------
-        noise_dict : dict
+        stim_dict : dict
             A dictionary sent via Queue from the main process (gui). Contains:
             - file : str
-                Path to the noise file.
+                Path to the stimulus file.
             - loops
             - argduino_colours
             - change_logic
@@ -629,20 +636,20 @@ class Presenter:
 
         """
         # p
-        # Get the data according to the noise_dict
+        # Get the data according to the stim_dict
         (
-            noise_path,
+            stim_path,
             loops,
             arduino_colours,
             change_logic,
             s_frames,
-        ) = self.load_and_initialize_data(noise_dict)
+        ) = self.load_and_initialize_data(stim_dict)
 
         arduino_colours = self.process_arduino_colours(
             arduino_colours, change_logic, len(s_frames) - 1
         )
 
-        # Load the noise data
+        # Load the stim data
         (
             all_patterns_3d,
             width,
@@ -651,15 +658,15 @@ class Presenter:
             desired_fps,
             patterns,
             nr_colours,
-        ) = self.load_noise_data(noise_path)
+        ) = self.load_stim_data(stim_path)
 
-        # Establish the shader program for presenting the noise
+        # Establish the shader program for presenting the stimulus.
         program = self.setup_shader_program(nr_colours)
 
-        # Calculate the aspect ratio of the window and the noise to adjust the noise size
+        # Calculate scaling based on aspect ratio of window and stimulus.
         scale_x, scale_y, quad = self.calculate_scaling(width, height)
 
-        # Create the buffer and vertex array object for the noise
+        # Create the buffer and vertex array object for the stimulus.
         vbo, vao = self.create_buffer_and_vao(quad, program)
 
         # Establish the time per frame for the desired fps
@@ -700,23 +707,26 @@ class Presenter:
 
         # Clean up and finalize the presentation
         self.cleanup_and_finalize(
-            patterns, vbo, vao, noise_dict, end_times, desired_fps
+            patterns, vbo, vao, stim_dict, end_times, desired_fps
         )
 
 
-def write_log(noise_dict, dropped_frames=None, wrong_frame_times=None):
+def write_log(stim_dict, dropped_frames=None, wrong_frame_times=None):
     """
-    Write the log file for the noise presentation.
+    Write the log file for the stimulus presentation.
     Parameters
     ----------
-    noise_dict : str
-        Path to the noise file.
+    stim_dict : str
+        Path to the stimulus file.
     """
-    file = noise_dict["file"]
-    loops = noise_dict["loops"]
-    colours = noise_dict["colours"]
-    change_logic = noise_dict["change_logic"]
-    filename_format = fpspy.config.user_log_dir() / f"{file}_{datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S.csv')}"
+    file = stim_dict["file"]
+    loops = stim_dict["loops"]
+    colours = stim_dict["colours"]
+    change_logic = stim_dict["change_logic"]
+    filename_format = (
+        fpspy.config.user_log_dir()
+        / f"{file}_{datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S.csv')}"
+    )
 
     if dropped_frames is None:
         dropped_frames = []
@@ -726,7 +736,7 @@ def write_log(noise_dict, dropped_frames=None, wrong_frame_times=None):
         writer = csv.writer(f)
         writer.writerow(
             [
-                "noise_file",
+                "stim_file",
                 "loops",
                 "colours",
                 "change_logic",
@@ -750,30 +760,31 @@ def write_log(noise_dict, dropped_frames=None, wrong_frame_times=None):
 
 def load_3d_patterns(path, channels=None):
     """
-    Load the noise .h5 file and return the noise data, width, height, frames and frame rate.
+    Load the stimulus .h5 file.
+
     Parameters
     ----------
     file : str
-        Path to the noise file.
+        Path to the stimulus file.
     Returns
     -------
-    noise : np.ndarray
+    stimulus : np.ndarray
         Noise data.
     width : int
-        Width of the noise.
+        Width of the stimulus.
     height : int
-        Height of the noise.
+        Height of the stimulus.
     frames : int
-        Number of frames in the noise.
+        Number of frames in the stimulus.
     frame_rate : int
-        Frame rate of the noise.
+        Frame rate of the stimulus.
 
     """
     with h5py.File(path, "r") as f:
-        noise = np.asarray(f["Noise"][:], dtype=np.uint8)
+        stim = np.asarray(f["Noise"][:], dtype=np.uint8)
         frame_rate = f["Frame_Rate"][()]
 
-    size = noise.shape
+    size = stim.shape
     width = size[2]
     height = size[1]
     frames = size[0]
@@ -784,21 +795,21 @@ def load_3d_patterns(path, channels=None):
 
     if (colours > 1) & (channels is not None):
         try:
-            noise = noise[:, :, :, channels]
+            stim = stim[:, :, :, channels]
             colours = len(channels)
         except IndexError:
-            print("more channels requested than available in the noise file")
+            print("more channels requested than available in the stim file")
             raise
-    # noise = np.asfortranarray(noise)
+    # stim = np.asfortranarray(stim)
 
-    return noise, width, height, frames, frame_rate, colours
+    return stim, width, height, frames, frame_rate, colours
 
 
-def get_noise_info(path):
+def get_stim_info(path):
     with h5py.File(path, "r") as f:
-        noise = f["Noise"][:]
+        stim = f["Noise"][:]
         frame_rate = f["Frame_Rate"][()]
-    size = noise.shape
+    size = stim.shape
     width = size[2]
     height = size[1]
     frames = size[0]
@@ -819,7 +830,10 @@ def pyglet_app_lead(
     delay=10,
 ):
     """
-    Start the pyglet app. This function is used to spawn the pyglet app in a separate process.
+    Start the pyglet app.
+
+    This function spawns the pyglet app in a separate process.
+
     Parameters
     ----------
     process_idx : int
@@ -838,7 +852,7 @@ def pyglet_app_lead(
     queue : multiprocessing.Queue
         Queue for communication with the main process (gui).
     """
-    Noise = Presenter(
+    presenter = Presenter(
         process_idx,
         config,
         queue,
@@ -852,7 +866,7 @@ def pyglet_app_lead(
         mode="lead",
         delay=delay,
     )
-    Noise.run_empty()  # Establish the empty loop
+    presenter.run_empty()  # Establish the empty loop
 
 
 def pyglet_app_follow(
@@ -869,7 +883,10 @@ def pyglet_app_follow(
     delay=10,
 ):
     """
-    Start the pyglet app. This function is used to spawn the pyglet app in a separate process.
+    Start the pyglet app. 
+
+    This function is spawns the pyglet app in a separate process.
+
     Parameters
     ----------
         process_idx : int
@@ -888,7 +905,7 @@ def pyglet_app_follow(
     queue : multiprocessing.Queue
         Queue for communication with the main process (gui).
     """
-    Noise = Presenter(
+    presenter = Presenter(
         process_idx,
         config,
         queue,
@@ -902,7 +919,7 @@ def pyglet_app_follow(
         mode="follow",
         delay=delay,
     )
-    Noise.run_empty()  # Establish the empty loop
+    presenter.run_empty()  # Establish the empty loop
 
 
 # Can run the pyglet app from here for testing purposes if needed
