@@ -12,8 +12,23 @@ import pyglet
 import importlib.resources
 import fpspy.arduino
 import fpspy.config
+import fpspy.queue
 
 # import pydevd_pycharm
+
+
+def _loop(frames, loops):
+    """Loop the frames array a given number of times."""
+    frames_cpy = frames.copy()
+    first_frame_dur = np.diff(frames[0:2])
+    for l in range(1, loops):
+        frames_cpy = np.concatenate(
+            (
+                frames_cpy,
+                frames + l * (frames[-1] - frames[0] + first_frame_dur),
+            )
+        )
+    return frames_cpy
 
 
 class Presenter:
@@ -159,16 +174,16 @@ class Presenter:
 
     def communicate(self):
         """Check and execute commands from the main process (gui)."""
-        command = None
         with self.lock:
-            if not self.queue.empty():
-                command = self.queue.get()
+            if self.queue.empty():
+                return
+            command = fpspy.queue.get(self.queue)
 
-        if command:
-            if type(command) == dict:  # This would be an array to play.
+        match command.type:
+            case "play":
                 self.stop = False
-                self.play(command)
-            elif command == "white_screen":
+                self.play(*command.args, **command.kwargs)
+            case "white_screen":
                 self.stop = False
                 if self.mode == "lead":
                     with self.ard_lock:
@@ -179,10 +194,7 @@ class Presenter:
                             target=self.receive_arduino_status
                         )
                         arduino_thread.start()
-
-            elif (
-                command == "stop"
-            ):  # If the command is "stop", stop the presentation
+            case "stop":
                 self.arduino_running = (
                     False  # Trigger the stop flag for next time
                 )
@@ -196,7 +208,7 @@ class Presenter:
                 current_time = time.perf_counter()
                 while time.perf_counter() - current_time < 1:
                     pass
-            elif command == "destroy":
+            case "destroy":
                 self.window.close()  # Close the window
 
     def receive_arduino_status(self):
@@ -235,45 +247,9 @@ class Presenter:
         if self.mode == "lead":
             self.arduino.send(colour)
 
-    def load_and_initialize_data(self, stim_dict):
-        """
-        Load and initialize data from the provided dictionary.
-
-        Parameters
-        ----------
-        stim_dict : dict
-            A dictionary containing various settings for stimulus playback.
-
-        Returns
-        -------
-        tuple
-            A tuple containing initialized values: file, loops, colours,
-            change_logic, s_frames.
-        """
-        # Extract parameters from the stim_dict
-        file = stim_dict["file"]
-        loops = stim_dict["loops"]
-        colours = stim_dict["colours"]
-        change_logic = stim_dict["change_logic"]
-        s_frames_temp = stim_dict["s_frames"]
-        stim_path = fpspy.config.user_stimuli_dir(self.config_dict) / file
-
-        # Copy and modify s_frames based on loops
-        s_frames = s_frames_temp.copy()
-        first_frame_dur = np.diff(s_frames[0:2])
-        for loop in range(1, loops):
-            s_frames = np.concatenate(
-                (
-                    s_frames,
-                    s_frames_temp
-                    + loop
-                    * (s_frames_temp[-1] - s_frames_temp[0] + first_frame_dur),
-                )
-            )
-
-        return stim_path, loops, colours, change_logic, s_frames
-
-    def process_arduino_colours(self, colours, change_logic, frames):
+    def process_arduino_colours(
+        self, colours: str, change_logic: int, n_frames: int
+    ):
         """
         Processes the colours and calculates the necessary repeats.
 
@@ -292,20 +268,14 @@ class Presenter:
             A list of colours repeated and arranged as per the specified logic.
         """
         colours = colours.split(",")
-        colour_repeats = np.ceil(frames / (len(colours) * change_logic))
+        colour_repeats = np.ceil(n_frames / (len(colours) * change_logic))
         colours = np.repeat(np.asarray(colours), change_logic).tolist()
         colours = colours * int(colour_repeats)
-
         return colours
 
-    def load_stim_data(self, path):
+    def to_textures(self, stim: fpspy.Stim):
         """
-        Loads stimulus data from file and creates textures for each frame.
-
-        Parameters
-        ----------
-        file : str
-            The path to the stimulus file.
+        Create textures from the stimulus frames.
 
         Returns
         -------
@@ -314,38 +284,18 @@ class Presenter:
             of each pattern, the number of frames, and the desired frames per second
             (fps).
         """
-        (
-            all_patterns_3d,
-            width,
-            height,
-            frames,
-            desired_fps,
-            nr_colours,
-        ) = load_3d_patterns(
-            path, channels=self.c_channels
-        )  # Load the stimulus data
-
         # Establish the texture for each stimulus frame
-        patterns = [
+        textures = [
             self.window.ctx.texture(
-                (width, height),
-                nr_colours,
-                all_patterns_3d[i, :].tobytes(),
+                (stim.width, stim.height),
+                stim.n_channels,
+                stim.frames[i, :].tobytes(),
                 samples=0,
                 alignment=1,
             )
-            for i in range(frames)
+            for i in range(len(stim.frames))
         ]
-
-        return (
-            all_patterns_3d,
-            width,
-            height,
-            frames,
-            desired_fps,
-            patterns,
-            nr_colours,
-        )
+        return textures
 
     def setup_shader_program(self, nr_colours=1):
         """
@@ -484,8 +434,6 @@ class Presenter:
 
         return time_per_frame, pattern_indices.tolist()
 
-    import time
-
     def presentation_loop(
         self,
         pattern_indices,
@@ -564,7 +512,16 @@ class Presenter:
                 return end_times
 
     def cleanup_and_finalize(
-        self, patterns, vbo, vao, stim_dict, end_times, desired_fps
+        self,
+        patterns,
+        vbo,
+        vao,
+        stimfile,
+        loops,
+        colours,
+        change_logic,
+        end_times,
+        desired_fps,
     ):
         """
         Cleans up resources, writes logs, and runs final procedures after the presentation.
@@ -611,23 +568,26 @@ class Presenter:
 
             # Write log with the stim_dict or any other relevant information
         write_log(
-            stim_dict, dropped_frames, wrong_frame_times
-        )  # Assuming 'write_log' is a function for logging
+            stimfile,
+            loops,
+            colours,
+            change_logic,
+            dropped_frames,
+            wrong_frame_times,
+        )
 
         # Run any additional emptying or resetting procedures
         self.stop = False
         return
 
-    def play(self, stim_dict):
+    def play(self, stim_path, loops, arduino_colours, change_logic, s_frames):
         """Play the stimulus file.
 
         This function loads the stimulus file, creates a texture from it and presents it.
 
         Parameters
         ----------
-        stim_dict : dict
-            A dictionary sent via Queue from the main process (gui). Contains:
-            - file : str
+            - stim_path : str
                 Path to the stimulus file.
             - loops
             - argduino_colours
@@ -635,36 +595,24 @@ class Presenter:
             - s_frames
 
         """
-        # p
-        # Get the data according to the stim_dict
-        (
-            stim_path,
-            loops,
-            arduino_colours,
-            change_logic,
-            s_frames,
-        ) = self.load_and_initialize_data(stim_dict)
+        s_frames = _loop(s_frames, loops)
 
         arduino_colours = self.process_arduino_colours(
             arduino_colours, change_logic, len(s_frames) - 1
         )
 
         # Load the stim data
-        (
-            all_patterns_3d,
-            width,
-            height,
-            frames,
-            desired_fps,
-            patterns,
-            nr_colours,
-        ) = self.load_stim_data(stim_path)
+        stim = fpspy.Stim.read_hdf5(stim_path)
+        supports_channel_selection = stim.n_channels > 1
+        if supports_channel_selection:
+            stim = stim.with_channels(self.c_channels)
+        textures = self.to_textures(stim)
 
         # Establish the shader program for presenting the stimulus.
-        program = self.setup_shader_program(nr_colours)
+        program = self.setup_shader_program(stim.n_channels)
 
         # Calculate scaling based on aspect ratio of window and stimulus.
-        scale_x, scale_y, quad = self.calculate_scaling(width, height)
+        scale_x, scale_y, quad = self.calculate_scaling(stim.width, stim.height)
 
         # Create the buffer and vertex array object for the stimulus.
         vbo, vao = self.create_buffer_and_vao(quad, program)
@@ -672,7 +620,7 @@ class Presenter:
         # Establish the time per frame for the desired fps
 
         time_per_frame, pattern_indices = self.setup_presentation(
-            frames, loops, desired_fps
+            len(stim), loops, stim.fps
         )
 
         # Synchronize the presentation
@@ -686,7 +634,8 @@ class Presenter:
         s_frames = s_frames + delay
 
         print(
-            f"stimulus will start in {s_frames[0] - time.perf_counter()} seconds, window_idx: {self.process_idx}"
+            f"stimulus will start in {s_frames[0] - time.perf_counter()} seconds, "
+            f"window_idx: {self.process_idx}"
         )
         print(f"Current time is {datetime.datetime.now()}")
         end_times = np.zeros(len(s_frames))
@@ -696,10 +645,10 @@ class Presenter:
             pattern_indices,
             s_frames,
             end_times,
-            nr_colours,
+            stim.n_channels,
             arduino_colours,
             change_logic,
-            patterns,
+            textures,
             program,
             vao,
         )
@@ -707,11 +656,26 @@ class Presenter:
 
         # Clean up and finalize the presentation
         self.cleanup_and_finalize(
-            patterns, vbo, vao, stim_dict, end_times, desired_fps
+            textures,
+            vbo,
+            vao,
+            stim_path,
+            loops,
+            arduino_colours,
+            change_logic,
+            end_times,
+            stim.fps,
         )
 
 
-def write_log(stim_dict, dropped_frames=None, wrong_frame_times=None):
+def write_log(
+    stimfile,
+    loops,
+    colours,
+    change_logic,
+    dropped_frames=None,
+    wrong_frame_times=None,
+):
     """
     Write the log file for the stimulus presentation.
     Parameters
@@ -719,13 +683,9 @@ def write_log(stim_dict, dropped_frames=None, wrong_frame_times=None):
     stim_dict : str
         Path to the stimulus file.
     """
-    file = stim_dict["file"]
-    loops = stim_dict["loops"]
-    colours = stim_dict["colours"]
-    change_logic = stim_dict["change_logic"]
     filename_format = (
         fpspy.config.user_log_dir()
-        / f"{file}_{datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S.csv')}"
+        / f"{stimfile}_{datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S.csv')}"
     )
 
     if dropped_frames is None:
@@ -747,7 +707,7 @@ def write_log(stim_dict, dropped_frames=None, wrong_frame_times=None):
         )
         writer.writerow(
             [
-                file,
+                stimfile,
                 loops,
                 colours,
                 change_logic,
@@ -756,64 +716,6 @@ def write_log(stim_dict, dropped_frames=None, wrong_frame_times=None):
                 wrong_frame_times,
             ]
         )
-
-
-def load_3d_patterns(path, channels=None):
-    """
-    Load the stimulus .h5 file.
-
-    Parameters
-    ----------
-    file : str
-        Path to the stimulus file.
-    Returns
-    -------
-    stimulus : np.ndarray
-        Noise data.
-    width : int
-        Width of the stimulus.
-    height : int
-        Height of the stimulus.
-    frames : int
-        Number of frames in the stimulus.
-    frame_rate : int
-        Frame rate of the stimulus.
-
-    """
-    with h5py.File(path, "r") as f:
-        stim = np.asarray(f["Noise"][:], dtype=np.uint8)
-        frame_rate = f["Frame_Rate"][()]
-
-    size = stim.shape
-    width = size[2]
-    height = size[1]
-    frames = size[0]
-    try:
-        colours = size[3]
-    except IndexError:
-        colours = 1
-
-    if (colours > 1) & (channels is not None):
-        try:
-            stim = stim[:, :, :, channels]
-            colours = len(channels)
-        except IndexError:
-            print("more channels requested than available in the stim file")
-            raise
-    # stim = np.asfortranarray(stim)
-
-    return stim, width, height, frames, frame_rate, colours
-
-
-def get_stim_info(path):
-    with h5py.File(path, "r") as f:
-        stim = f["Noise"][:]
-        frame_rate = f["Frame_Rate"][()]
-    size = stim.shape
-    width = size[2]
-    height = size[1]
-    frames = size[0]
-    return width, height, frames, frame_rate
 
 
 def pyglet_app_lead(
@@ -883,7 +785,7 @@ def pyglet_app_follow(
     delay=10,
 ):
     """
-    Start the pyglet app. 
+    Start the pyglet app.
 
     This function is spawns the pyglet app in a separate process.
 
