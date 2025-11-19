@@ -90,6 +90,8 @@ at the specified port every noise frame. </br>
 
 # Dev workflow
 
+Tested with Python 3.10. You may need `pillow env use python3.10`.
+
 Install with poetry:
 
 ```bash
