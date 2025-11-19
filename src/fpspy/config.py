@@ -46,7 +46,7 @@ def default_data_dir() -> Path:
     return path
 
 
-def resolve_data_dir(config: dict) -> Path:
+def user_data_dir(config: dict) -> Path:
     """Return the effective data directory."""
     # 1. If config has paths.data_root and it's non-empty, use that
     paths_cfg = config.get("paths", {})
@@ -58,9 +58,8 @@ def resolve_data_dir(config: dict) -> Path:
         # 2. Fall back to default platformdirs location
         path = default_data_dir()
 
-    path.mkdir(parents=True, exist_ok=True)
+    path.mkdir(parents=False, exist_ok=True)
     return path
-
 
 def user_config_file_path() -> Path:
     """Get the path to the user config file."""
@@ -89,14 +88,6 @@ def get_arduino_baud_rate(config: dict) -> int:
 def get_arduino_trigger_command(config: dict) -> str:
     """Get the Arduino trigger command from config."""
     return config["arduino"]["trigger_command"]
-
-
-def user_stimuli_dir(config: dict) -> Path:
-    """Get the user stimuli directory for fpspy."""
-    data_dir = Path(config["paths"]["data_dir"])
-    path = data_dir / "stimuli"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
 
 
 def _load_default_config() -> dict:
