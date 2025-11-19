@@ -12,7 +12,7 @@ from multiprocessing import sharedctypes
 import pyglet
 from arduino import Arduino, DummyArduino
 import threading
-import pydevd_pycharm
+
 
 class Presenter:
     """
@@ -152,7 +152,7 @@ class Presenter:
         while not self.window.is_closing:
             self.window.use()
             # self.window.ctx.clear(0.5, 0.5, 0.5, 1.0)  # Clear the window with a grey background
-            self.window.ctx.clear(0, 0, 0, 1.0)
+            self.window.ctx.clear(1, 1, 1, 1.0)
 
             self.window.swap_buffers()  # Swap the buffers (update the window content)
             self.communicate()  # Check for commands from the main process (gui)
@@ -504,6 +504,12 @@ class Presenter:
             The vertex array object for rendering.
         """
 
+        if change_logic==1:
+            self.window.ctx.clear(0, 0, 0)
+            c = arduino_colours[0]
+
+            self.send_colour(c)
+
         for idx, current_pattern_index in enumerate(pattern_indices):
             self.communicate()  # Custom function for communication, can be modified as needed
             if self.stop:
@@ -517,16 +523,9 @@ class Presenter:
 
             self.window.use()  # Ensure the correct context is being used
 
-            # Handle colour change logic
+            #Handle colour change logic
             if change_logic >1:
                 if current_pattern_index % change_logic == 0:
-                    c = arduino_colours[current_pattern_index]
-
-                    self.send_colour(c)  # Custom function to send colour to Arduino
-            else:
-                if current_pattern_index == 0 or arduino_colours[current_pattern_index] != arduino_colours[
-                    current_pattern_index - 1
-                ]:
                     c = arduino_colours[current_pattern_index]
 
                     self.send_colour(c)  # Custom function to send colour to Arduino
