@@ -22,15 +22,6 @@ def get_windows():
             "arduino_port": "/dev/ttyUSB0",
             "arduino_baud_rate": 9600,
         },
-        "2": {
-            "y_shift": 1000,
-            "x_shift": 1600,
-            "window_size": (500, 500),
-            "fullscreen": False,
-            "style": "transparent",
-            "channels": np.array([0, 1, 2]),
-
-        }
     }
 
     # Add more windows as needed

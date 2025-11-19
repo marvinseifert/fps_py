@@ -201,15 +201,16 @@ class Presenter:
 
     def receive_arduino_status(self):
         buffer = True
-        self.arduino.arduino.reset_input_buffer()
-        while not self.stop:
-            status = self.arduino.read()
-            if status == "Trigger":
-                buffer = False
-            if status == "finished" and not buffer:
-                self.arduino_running = False
-                self.status_queue.put("done")
-                break
+        if self.mode == "lead":
+            self.arduino.arduino.reset_input_buffer()
+            while not self.stop:
+                status = self.arduino.read()
+                if status == "Trigger":
+                    buffer = False
+                if status == "finished" and not buffer:
+                    self.arduino_running = False
+                    self.status_queue.put("done")
+                    break
 
     def send_array(self, array):
         """Send array string of shared memory to other processes"""
@@ -517,10 +518,18 @@ class Presenter:
             self.window.use()  # Ensure the correct context is being used
 
             # Handle colour change logic
-            if current_pattern_index % change_logic == 0:
-                c = arduino_colours[current_pattern_index]
+            if change_logic >1:
+                if current_pattern_index % change_logic == 0:
+                    c = arduino_colours[current_pattern_index]
 
-                self.send_colour(c)  # Custom function to send colour to Arduino
+                    self.send_colour(c)  # Custom function to send colour to Arduino
+            else:
+                if current_pattern_index == 0 or arduino_colours[current_pattern_index] != arduino_colours[
+                    current_pattern_index - 1
+                ]:
+                    c = arduino_colours[current_pattern_index]
+
+                    self.send_colour(c)  # Custom function to send colour to Arduino
 
             # Clear the window and render the noise
             self.window.ctx.clear(0, 0, 0)
@@ -546,6 +555,7 @@ class Presenter:
             # Break the loop if the last frame was presented
             if idx >= len(pattern_indices) - 1:
                 return end_times
+        return None
 
     def cleanup_and_finalize(
         self, patterns, vbo, vao, noise_dict, end_times, desired_fps

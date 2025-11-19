@@ -78,6 +78,7 @@ class DummyArduino:
         self.queue_lock = queue_lock
         self.connected = True  # pretend it's always connected
 
+
     def connect(self):
         # no real connection, just mark as connected
         self.connected = True
