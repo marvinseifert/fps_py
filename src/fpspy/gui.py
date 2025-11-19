@@ -20,10 +20,11 @@ import time
 import numpy as np
 import fpspy.create_noise
 import fpspy.shuffle_noise
+import fpspy.queue
 
 
-class NoiseGeneratorApp:
-    """Class for the Noise Generator GUI."""
+class FpspyGui:
+    """GUI for generating presenting stimuli."""
 
     def __init__(
         self,
@@ -46,7 +47,6 @@ class NoiseGeneratorApp:
             Queue for communication with the main process (gui).
 
         """
-
         self.config = config
         self.lock = lock
         self.queue1 = queue1
@@ -56,7 +56,7 @@ class NoiseGeneratorApp:
         self.status_lock = status_lock
         self.root = root
         self.nr_processes = nr_processes
-        self.root.title("Noise Generator GUI")
+        self.root.title("Fpspy GUI")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.geometry("600x500")  # application window size
 
@@ -66,6 +66,23 @@ class NoiseGeneratorApp:
 
         self.right_frame = ttk.Frame(self.root, padding="10")
         self.right_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # Status bar at the bottom
+        self.status_bar = tk.Label(
+            self.root,
+            text="Ready",
+            relief=tk.SUNKEN,
+            anchor=tk.W,
+            bg="#f0f0f0",
+            padx=5,
+            pady=2
+        )
+        self.status_bar.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E))
+
+        # Configure row and column weights
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+        self.root.grid_columnconfigure(1, weight=1)
 
         # Variables to store the values of the input fields
         standard_values = ["5", "1000,1000", "20", "5.0"]
@@ -176,7 +193,6 @@ class NoiseGeneratorApp:
         self.help_button.grid(row=10, column=0, pady=10, padx=0, sticky=tk.W)
 
         # 2. Widgets for the right frame
-        self.root.grid_rowconfigure(0, weight=1)
         self.right_frame.grid_columnconfigure(
             0, weight=1
         )  # This makes the listbox expand horizontally
@@ -258,16 +274,17 @@ class NoiseGeneratorApp:
         )
         self.refresh_button.pack(side=tk.LEFT, padx=5)
 
-        self.change_data_dir_button = ttk.Button(
-            button_frame, text="change data dir", command=self.change_data_directory
-        )
-        self.change_data_dir_button.pack(side=tk.LEFT, padx=5)
-
         # Selected file info label
         self.selected_file_info_label = ttk.Label(
             self.right_frame, textvariable=self.selected_file_info_var, width=40
         )
         self.selected_file_info_label.grid(row=3, column=0, pady=5, sticky=tk.E)
+
+        # Change data dir button (below file listbox, aligned right)
+        self.change_data_dir_button = ttk.Button(
+            self.right_frame, text="change data dir", command=self.change_data_directory
+        )
+        self.change_data_dir_button.grid(row=5, column=0, pady=5, sticky=tk.E)
 
         # 3. Function calls
         self.refresh_file_list()
@@ -299,7 +316,7 @@ class NoiseGeneratorApp:
             )
             file_name = file_name_path.stem  # Get the filename without any suffix
         file_name += ".h5"
-        complete_file_name = fpspy.config.user_stimuli_dir(self.config) / file_name
+        complete_file_name = fpspy.config.user_data_dir(self.config) / file_name
 
         # Calculate number of frames needed
         frames = int(noise_duration * 60 * noise_frequency)
@@ -332,45 +349,40 @@ class NoiseGeneratorApp:
 
     def on_play_stim(self):
         """Play the selected stimulus file."""
-
         # Check selected file in the file_listbox
         index = self.file_listbox.curselection()
         stim_name = self.file_listbox.get(index[0])
-        stim_path = fpspy.config.user_stimuli_dir(self.config) / stim_name
-        _, _, frames, frame_rate = load_stim_info(stim_path)
-        s_frames = schedule_frames(frames, frame_rate)
+        stim_path = fpspy.config.user_data_dir(self.config) / stim_name
+        info = fpspy.Stim.preview_hdf5(stim_path)
+        s_frames = schedule_frames(info["n_frames"], info["fps"])
 
-        queue_data = {
-            "file": stim_name,
-            "loops": int(self.loop_entry.get()),
-            "colours": self.colours.get(),
-            "change_logic": int(self.colour_change.get()),
-            "s_frames": s_frames,
-        }
         with self.lock:
             for _ in range(self.nr_processes):
-                self.queue1.put(
-                    queue_data
-                )  # Put the stimulus name in the queue for each window thread to read.
+                # Put the stimulus name in the queue for each window thread to read.
+                fpspy.queue.put(self.queue1, "play",
+                    stim_path=stim_path,
+                    loops=int(self.loop_entry.get()),
+                    arduino_colours=self.colours.get(),
+                    change_logic=int(self.colour_change.get()),
+                    s_frames=s_frames,
+                )
         self.arduino_running = True
         # self.arduino_light.config(bg="green")
         # # change text of the button
         # self.arduino_light.config(text="Stim running")
 
-
     def on_stop_stim(self):
         """Stop the stimulus playback."""
         with self.lock:
             for _ in range(self.nr_processes):
-                self.queue1.put(
-                    "stop"
-                )  # Put "stop" in the queue for the pyglet thread to read
+                fpspy.queue.put(self.queue1, "stop")
+                # Put "stop" in the queue for the pyglet thread to read
         self.arduino_done_callback()
+        self.update_status("Stimulus stopped")
 
     def refresh_file_list(self):
         """Refresh the list of .h5py files in the stimuli directory."""
-
-        stimuli_dir = fpspy.config.user_stimuli_dir(self.config)
+        stimuli_dir = fpspy.config.user_data_dir(self.config)
 
         if stimuli_dir.is_dir():
             files = [f.name for f in stimuli_dir.iterdir() if f.suffix == ".h5"]
@@ -384,28 +396,24 @@ class NoiseGeneratorApp:
 
     def on_file_select(self, event):
         """Update the selected file info label when a file is selected.
+
         Parameters
         ----------
         event : tkinter.Event
             The event object (unused).
-
         """
-
         if index := self.file_listbox.curselection():
             try:
                 file_name = self.file_listbox.get(index[0])
 
                 # Get some info about the selected file and display it:
-                with h5py.File(fpspy.config.user_stimuli_dir(self.config) / file_name, "r") as f:
-                    noise_size = f["Noise"].shape
-                    fps = f["Frame_Rate"][()]
-                    checkerboard_size = f["Checkerboard_Size"][()]
-                    shuffle = f["Shuffle"][()]
-                duration = noise_size[0] / fps / 60
-                self.selected_file_info_var.set(
-                    f"size: {checkerboard_size}, fps: {fps}, time: {duration:.2f} min, "
-                    f"shuffle: {shuffle}"
-                )
+                info = fpspy.Stim.preview_hdf5(
+                    fpspy.config.user_data_dir(self.config) / file_name)
+                duration = info["n_frames"] / info["fps"] / 60
+                info_str = f"fps: {info['fps']}, time: {duration:.2f} min"
+                if "checkerboard_size" in info:
+                    info_str += f", size: {info['checkerboard_size']}, shuffle: {info['Shuffle']}"
+                self.selected_file_info_var.set(info_str)
                 self.style.configure(
                     "Play.TButton", background="green"
                 )  # Change the button color to green
@@ -458,7 +466,7 @@ class NoiseGeneratorApp:
 
         with self.lock:
             for _ in range(self.nr_processes):
-                self.queue1.put("white_screen")
+                fpspy.queue.send(self.queue1, "white_screen")
         with self.ard_lock:
             self.ard_queue.put(self.arduino_cmd_var.get())
             arduino_thread = threading.Thread(target=self.arduino_done_callback)
@@ -494,7 +502,7 @@ class NoiseGeneratorApp:
             except Exception:
                 pass
             for _ in range(self.nr_processes):
-                self.queue1.put("stop")
+                fpspy.queue.put(self.queue1, "stop")
         # self.arduino_running = False
         # with self.status_lock:
         #     self.status_queue.get()
@@ -503,6 +511,16 @@ class NoiseGeneratorApp:
     def show_help(self):
         """Show help dialog with directory information."""
         fpspy.help_dialog.show_directories_help(self.root, self.config)
+
+    def update_status(self, message):
+        """Update the status bar with a new message.
+
+        Parameters
+        ----------
+        message : str
+            The message to display in the status bar.
+        """
+        self.status_bar.config(text=message)
 
     def change_data_directory(self):
         """Open dialog to change the data directory and save to config."""
@@ -575,10 +593,7 @@ class NoiseGeneratorApp:
             # Refresh the file list to show files from new directory
             self.refresh_file_list()
 
-            messagebox.showinfo(
-                "Data Directory Changed",
-                f"Data directory changed to:\n{result[0]}\n\nStimuli will now be saved to:\n{result[0] / 'stimuli'}"
-            )
+            self.update_status(f"Data directory changed to: {result[0]}")
 
     def on_close(self):
         """Called when the window is closed."""
@@ -588,12 +603,10 @@ class NoiseGeneratorApp:
             self.ard_queue.put("destroy")
         with self.lock:
             for _ in range(self.nr_processes):
-                self.queue1.put(
-                    "stop"
-                )  # Put "stop" in the queue for the pyglet thread to read
-                self.queue1.put(
-                    "destroy"
-                )  # Put "destroy" in the queue for the pyglet thread.
+                # Put "stop" in the queue for the pyglet thread to read
+                fpspy.queue.put(self.queue1, "stop")
+                # Put "destroy" in the queue for the pyglet thread.
+                fpspy.queue.put(self.queue1, "destroy")
 
         # Will be read by the pyglet thread to close the window.
         self.root.destroy()
@@ -612,7 +625,7 @@ def tkinter_app(
     """
 
     root = tk.Tk()  # Create the root window
-    app = NoiseGeneratorApp(
+    app = FpspyGui(
         root, config, queue1, lock, ard_queue, ard_lock, status_queue, status_lock, nr_processes
     )  # Create the NoiseGeneratorApp instance
     root.protocol(
@@ -628,44 +641,10 @@ def tkinter_app(
 #     tkinter_app(Queue())
 
 
-def load_stim_info(path: str):
-    """Load the stimulus and metadata (width, height, frames, frame rate) from .h5 file.
 
-    Parameters
-    ----------
-    file : str | Path
-        Path to the stimulus file.
-    Returns
-    -------
-    stimulus : np.ndarray
-        Noise data.
-    width : int
-        Width of each frame.
-    height : int
-        Height of each frame.
-    frames : int
-        Number of frames in the stimulus.
-    frame_rate : int
-        Frame rate of the stimulus.
-
-    """
-    with h5py.File(path, "r") as f:
-        size = f["Noise"][:].shape
-        frame_rate = f["Frame_Rate"][()]
-
-    width = size[2]
-    height = size[1]
-    frames = size[0]
-
-    return width, height, frames, frame_rate
-
-
-def schedule_frames(frames, frame_rate):
-    current_time = time.perf_counter()
-
-    fps = frame_rate
+def schedule_frames(frames, fps):
     frame_duration = 1 / fps
-    buffer = 5
+    current_time = time.perf_counter()
     s_frames = np.linspace(
         current_time, current_time + frames * frame_duration, frames + 1
     )
