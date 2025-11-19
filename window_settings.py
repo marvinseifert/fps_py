@@ -14,7 +14,7 @@ def get_windows():
     windows = {
         "1": {
             "y_shift": 1000,
-            "x_shift": -1080,
+            "x_shift": 1080,
             "window_size": (500, 500),
             "fullscreen": False,
             "style": "transparent",
@@ -24,7 +24,7 @@ def get_windows():
         },
         "2": {
             "y_shift": 1000,
-            "x_shift": -500,
+            "x_shift": 1600,
             "window_size": (500, 500),
             "fullscreen": False,
             "style": "transparent",

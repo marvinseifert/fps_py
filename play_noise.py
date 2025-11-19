@@ -10,7 +10,7 @@ import datetime
 from multiprocessing import RawArray
 from multiprocessing import sharedctypes
 import pyglet
-from arduino import Arduino
+from arduino import Arduino, DummyArduino
 import threading
 import pydevd_pycharm
 
@@ -73,6 +73,7 @@ class Presenter:
         self.c_channels = config_dict["windows"][str(self.process_idx)]["channels"]
         self.delay = delay
         self.arduino_running = False
+
         settings.WINDOW[
             "class"
         ] = "moderngl_window.context.pyglet.Window"  # using a pyglet window
@@ -115,18 +116,27 @@ class Presenter:
                 queue=ard_queue,
                 queue_lock=ard_lock,
             )
+        else:
+            self.arduino = DummyArduino(
+                port="COM_TEST",
+                baud_rate=9600,
+                queue=ard_queue,
+                queue_lock=ard_lock,
+
+            )
+
 
     def __del__(self):
         try:
-            if getattr(self, "mode", None) == "lead":
-                ard_lock = getattr(self, "ard_lock", None)
-                arduino = getattr(self, "arduino", None)
-                if ard_lock is not None and arduino is not None:
-                    try:
-                        with ard_lock:
-                            arduino.disconnect()
-                    except AttributeError:
-                        pass
+
+            ard_lock = getattr(self, "ard_lock", None)
+            arduino = getattr(self, "arduino", None)
+            if ard_lock is not None and arduino is not None:
+                try:
+                    with ard_lock:
+                        arduino.disconnect()
+                except AttributeError:
+                    pass
         except AttributeError:
             pass
 
@@ -164,24 +174,24 @@ class Presenter:
                 self.play_noise(command)
             elif command == "white_screen":
                 self.stop = False
-                if self.mode == "lead":
-                    with self.ard_lock:
-                        ard_command = self.ard_queue.get()
-                        self.send_colour(ard_command)
-                        self.arduino_running = True
-                        arduino_thread = threading.Thread(
-                            target=self.receive_arduino_status
-                        )
-                        arduino_thread.start()
+
+                with self.ard_lock:
+                    ard_command = self.ard_queue.get()
+                    self.send_colour(ard_command)
+                    self.arduino_running = True
+                    arduino_thread = threading.Thread(
+                        target=self.receive_arduino_status
+                    )
+                    arduino_thread.start()
 
             elif command == "stop":  # If the command is "stop", stop the presentation
                 self.arduino_running = False  # Trigger the stop flag for next time
                 self.status_queue.put("done")
-                if self.mode == "lead":
-                    self.send_colour("b")
-                    self.send_colour("b")
-                    self.send_colour("b")
-                    self.send_colour("O")
+
+                self.send_colour("b")
+                self.send_colour("b")
+                self.send_colour("b")
+                self.send_colour("O")
                 self.stop = True
                 current_time = time.perf_counter()
                 while time.perf_counter() - current_time < 1:
@@ -212,18 +222,18 @@ class Presenter:
 
     def send_trigger(self):
         """Send a trigger signal to the Arduino."""
-        if self.mode == "lead":
-            self.arduino.send("T")
+
+        self.arduino.send("T")
 
     def switch_trigger_modes(self, mode="t_s_off"):
         """Switch the trigger mode of the Arduino."""
-        if self.mode == "lead":
-            self.arduino.send(mode)
+
+        self.arduino.send(mode)
 
     def send_colour(self, colour):
         """Send a colour signal to the Arduino."""
-        if self.mode == "lead":
-            self.arduino.send(colour)
+
+        self.arduino.send(colour)
 
     def load_and_initialize_data(self, noise_dict):
         """

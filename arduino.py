@@ -67,3 +67,31 @@ class Arduino:
         self.arduino.close()
         self.connected = False
         print("Arduino disconnected")
+
+
+class DummyArduino:
+    def __init__(self, port="COM3", baud_rate=9600, queue=None, queue_lock=None):
+        self.port = port
+        self.baud_rate = baud_rate
+        self.arduino = None
+        self.queue = queue
+        self.queue_lock = queue_lock
+        self.connected = True  # pretend it's always connected
+
+    def connect(self):
+        # no real connection, just mark as connected
+        self.connected = True
+
+
+    def send(self, message):
+        # mimic the same interface, but only log
+        txt = f"\n{message}\n".encode("utf-8")
+
+
+    def read(self):
+        # return None or some test data
+
+        return None
+
+    def disconnect(self):
+        self.connected = False
