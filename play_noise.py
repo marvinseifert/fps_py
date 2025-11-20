@@ -107,7 +107,7 @@ class Presenter:
         self.stop = False  # Flag for stopping the presentation
         self.window.set_default_viewport()  # Set the viewport to the window size
 
-        if self.mode == "lead":
+        if self.mode == "lead" and not config_dict["windows"][str(self.process_idx)]["arduino_port"] == "dummy":
             self.arduino = Arduino(
                 port=config_dict["windows"][str(self.process_idx)]["arduino_port"],
                 baud_rate=config_dict["windows"][str(self.process_idx)][
@@ -227,9 +227,11 @@ class Presenter:
 
     def switch_trigger_modes(self, mode="t_s_off"):
         """Switch the trigger mode of the Arduino."""
-
-        self.arduino.send(mode)
-        self.arduino.arduino.flush()
+        try:
+            self.arduino.send(mode)
+            self.arduino.arduino.flush()
+        except AttributeError:
+            pass
 
     def send_colour(self, colour):
         """Send a colour signal to the Arduino."""

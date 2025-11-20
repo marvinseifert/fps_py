@@ -19,7 +19,7 @@ def get_windows():
             "fullscreen": False,
             "style": "transparent",
             "channels": np.array([0, 0, 0]),
-            "arduino_port": "COM2",
+            "arduino_port": "dummy",
             "arduino_baud_rate": 9600,
         },
     }
