@@ -14,6 +14,7 @@ import fpspy.queue
 
 _logger = logging.getLogger(__name__)
 
+
 def _loop(frames, loops):
     """Loop the frames array a given number of times."""
     frames_cpy = frames.copy()
@@ -47,28 +48,30 @@ BufferSwapCallback = Callable[[int], None]
 
 
 class Presenter:
-    """
-    This class is responsible for presenting the stimuli. It is a wrapper around the
-    pyglet window class and the moderngl_window BaseWindow class. It is responsible for
-    loading the stimuli and presenting them. It is also responsible for
-    communicating with the main process (gui) via a queue.
+    """3Brain presenter.
+
+    Slimmed-down version of play.Presenter (which is used for the Multi-Channel Systems
+    setup).
+
+    This class is a wrapper around the pyglet window class and the moderngl_window
+    BaseWindow class. It is responsible for loading and presenting the stimuli.
+    The Presenter class is instantiated in a separate process for each window
+    and communicate with the GUI process via a multiprocessing.Queue.
     """
 
     def __init__(
         self,
         process_idx,
-        config_dict,
+        config,
         queue,
-        lock,
         status_queue,
-        status_lock,
         mode,
         delay=10,
     ):
         """
         Parameters
         ----------
-        config_dict : dict
+        config : dict
             Dictionary containing the configuration parameters for the window.
             Keys:
                 "y_shift" : int
@@ -88,28 +91,23 @@ class Presenter:
 
         """
         self.process_idx = process_idx
-        self.config_dict = config_dict
+        self.config = config
         self.queue = queue
-        self.lock = lock
         self.mode = mode
         self.status_queue = status_queue
-        self.status_lock = status_lock
-        self.n_followers = len(config_dict["windows"].keys()) - 1
-        self.c_channels = config_dict["windows"][str(self.process_idx)][
-            "channels"
-        ]
+        self.c_channels = config["windows"][str(self.process_idx)]["channels"]
         self.delay = delay
         settings.WINDOW["class"] = (
             "moderngl_window.context.pyglet.Window"  # using a pyglet window
         )
-        settings.WINDOW["gl_version"] = config_dict["gl_version"]
-        settings.WINDOW["size"] = config_dict["windows"][str(self.process_idx)][
+        settings.WINDOW["gl_version"] = config["gl_version"]
+        settings.WINDOW["size"] = config["windows"][str(self.process_idx)][
             "window_size"
         ]
         settings.WINDOW["aspect_ratio"] = (
             None  # Sets the aspect ratio to the window's aspect ratio
         )
-        settings.WINDOW["fullscreen"] = config_dict["windows"][
+        settings.WINDOW["fullscreen"] = config["windows"][
             str(self.process_idx)
         ]["fullscreen"]
         settings.WINDOW["samples"] = 0
@@ -117,24 +115,22 @@ class Presenter:
         settings.WINDOW["vsync"] = True
         settings.WINDOW["resizable"] = False
         settings.WINDOW["title"] = "Noise Presentation"
-        settings.WINDOW["style"] = config_dict["windows"][
-            str(self.process_idx)
-        ]["style"]
+        settings.WINDOW["style"] = config["windows"][str(self.process_idx)][
+            "style"
+        ]
 
-        self.frame_duration = (
-            1 / config_dict["fps"]
-        )  # Calculate the frame duration
+        self.frame_duration = 1 / config["fps"]  # Calculate the frame duration
 
         self.window = moderngl_window.create_window_from_settings()
         self.window.position = (
-            config_dict["windows"][str(self.process_idx)]["x_shift"],
-            config_dict["windows"][str(self.process_idx)]["y_shift"],
+            config["windows"][str(self.process_idx)]["x_shift"],
+            config["windows"][str(self.process_idx)]["y_shift"],
         )  # Shift the window
         self.window.init_mgl_context()  # Initialize the moderngl context
         self.window.set_default_viewport()  # Set the viewport to the window size
 
         # We only use 1 texture unit, so we can hardcode its unit number.
-        self.TEXTURE_UNIT = 0  
+        self.TEXTURE_UNIT = 0
 
         # Callbacks. Currently only allows for one callback per event.
         # Purpose: to allow for arduino color changing.
@@ -142,15 +138,11 @@ class Presenter:
         self.on_swap_buffers_after = None
         self.on_stop = None
 
-    def register_on_swap_buffers_before(
-        self, callback: BufferSwapCallback
-    ):
+    def register_on_swap_buffers_before(self, callback: BufferSwapCallback):
         """Register a callback for the before swap buffers event."""
         self.on_swap_buffers_before = callback
 
-    def register_on_swap_buffers_after(
-    self, callback: BufferSwapCallback
-        ):
+    def register_on_swap_buffers_after(self, callback: BufferSwapCallback):
         """Register a callback for the after swap buffers event."""
         self.on_swap_buffers_after = callback
 
@@ -190,10 +182,9 @@ class Presenter:
 
     def communicate(self):
         """Check and execute commands from the main process (gui)."""
-        with self.lock:
-            if self.queue.empty():
-                return
-            command = fpspy.queue.get(self.queue)
+        if self.queue.empty():
+            return
+        command = fpspy.queue.get(self.queue)
 
         stop = False
         match command.type:
@@ -396,9 +387,9 @@ class Presenter:
             The vertex array object for rendering.
         """
         # Ensure the correct context is being used.
-        self.window.use()  
+        self.window.use()
         for i, texture_idx in enumerate(texture_idxs):
-            is_exit = self.communicate()  
+            is_exit = self.communicate()
             if is_exit:
                 return end_times
             # Sync frame presentation to the scheduled time.
@@ -508,7 +499,11 @@ class Presenter:
         program = self.setup_shader_program(stim.n_channels)
 
         # Calculate scaling based on aspect ratio of window and stimulus.
-        scale_x, scale_y, quad = self.calculate_scaling(stim.width, stim.height)
+        do_broadcast = stim.height == 1 and stim.width == 1
+        if do_broadcast:
+            _, _, quad = self.calculate_scaling(*self.window.size)
+        else:
+            _, _, quad = self.calculate_scaling(stim.width, stim.height)
 
         # Create the buffer and vertex array object for the stimulus.
         vbo, vao = self.create_buffer_and_vao(quad, program)
@@ -613,9 +608,7 @@ def pyglet_app_lead(
     process_idx,
     config,
     queue,
-    lock,
     status_queue,
-    status_lock,
     delay=10,
 ):
     """
@@ -645,14 +638,49 @@ def pyglet_app_lead(
         process_idx,
         config,
         queue,
-        lock,
         status_queue,
-        status_lock,
+        mode="lead",
         delay=delay,
     )
-    presenter.run_empty()  # Establish the empty loop
+    presenter.run_empty()
 
 
-# Can run the pyglet app from here for testing purposes if needed
-# if __name__ == '__main__':
-#     pyglet_app(Queue())
+def pyglet_app_follow(
+    process_idx,
+    config,
+    queue,
+    status_queue,
+    delay=10,
+):
+    """
+    Start the pyglet app.
+
+    This function is spawns the pyglet app in a separate process.
+
+    Parameters
+    ----------
+        process_idx : int
+        Index of the process. Used to determine the window position.
+    config : dict
+        Configuration dictionary.
+        Keys:
+            width : int
+                Width of the window.
+            height : int
+                Height of the window.
+            fullscreen : bool
+                Fullscreen mode.
+            screen : int
+                Screen number.
+    queue : multiprocessing.Queue
+        Queue for communication with the main process (gui).
+    """
+    presenter = Presenter(
+        process_idx,
+        config,
+        queue,
+        status_queue,
+        mode="follow",
+        delay=delay,
+    )
+    presenter.run_empty()
