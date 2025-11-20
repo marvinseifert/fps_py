@@ -1,22 +1,18 @@
 import csv
 import datetime
-from pathlib import Path
-import threading
+import importlib.resources
+import logging
 import time
-import h5py
-import numpy as np
+from typing import Callable
 import moderngl
 import moderngl_window
 from moderngl_window.conf import settings
-import pyglet
-import threading
-import importlib.resources
-import fpspy.arduino
+import numpy as np
 import fpspy.config
 import fpspy.queue
 
-# import pydevd_pycharm
 
+_logger = logging.getLogger(__name__)
 
 def _loop(frames, loops):
     """Loop the frames array a given number of times."""
@@ -32,6 +28,24 @@ def _loop(frames, loops):
     return frames_cpy
 
 
+def wait_until(target_time):
+    """Semi-busy-wait until the target time is reached."""
+    max_busy_wait_ms = 0.002
+    now = time.perf_counter()
+    remaining = target_time - now
+    if remaining <= 0:
+        _logger.warning(f"{target_time=} already passed, {now=}.")
+        return
+    if remaining > max_busy_wait_ms:
+        time.sleep(remaining - max_busy_wait_ms)
+    while time.perf_counter() < target_time:
+        pass
+
+
+# Callback is given the frame index.
+BufferSwapCallback = Callable[[int], None]
+
+
 class Presenter:
     """
     This class is responsible for presenting the stimuli. It is a wrapper around the
@@ -45,11 +59,7 @@ class Presenter:
         process_idx,
         config_dict,
         queue,
-        sync_queue,
-        sync_lock,
         lock,
-        ard_queue,
-        ard_lock,
         status_queue,
         status_lock,
         mode,
@@ -80,20 +90,15 @@ class Presenter:
         self.process_idx = process_idx
         self.config_dict = config_dict
         self.queue = queue
-        self.sync_queue = sync_queue
-        self.sync_lock = sync_lock
         self.lock = lock
         self.mode = mode
-        self.ard_queue = ard_queue
-        self.ard_lock = ard_lock
         self.status_queue = status_queue
         self.status_lock = status_lock
-        self.nr_followers = len(config_dict["windows"].keys()) - 1
+        self.n_followers = len(config_dict["windows"].keys()) - 1
         self.c_channels = config_dict["windows"][str(self.process_idx)][
             "channels"
         ]
         self.delay = delay
-        self.arduino_running = False
         settings.WINDOW["class"] = (
             "moderngl_window.context.pyglet.Window"  # using a pyglet window
         )
@@ -126,56 +131,58 @@ class Presenter:
             config_dict["windows"][str(self.process_idx)]["y_shift"],
         )  # Shift the window
         self.window.init_mgl_context()  # Initialize the moderngl context
-        self.stop = False  # Flag for stopping the presentation
         self.window.set_default_viewport()  # Set the viewport to the window size
 
-        if self.mode == "lead" and not config_dict["windows"][str(self.process_idx)]["arduino_port"] == "dummy":
-            self.arduino = fpspy.arduino.Arduino(
-                port=fpspy.config.get_arduino_port(config_dict),
-                baud_rate=fpspy.config.get_arduino_baud_rate(config_dict),
-                trigger_command=fpspy.config.get_arduino_trigger_command(
-                    config_dict
-                ),
-                queue=ard_queue,
-                queue_lock=ard_lock,
-            )
-        else:
-            self.arduino = fpspy.arduino.DummyArduino(
-                port="COM_TEST",
-                baud_rate=9600,
-                queue=ard_queue,
-                queue_lock=ard_lock,
+        # We only use 1 texture unit, so we can hardcode its unit number.
+        self.TEXTURE_UNIT = 0  
 
-            )
+        # Callbacks. Currently only allows for one callback per event.
+        # Purpose: to allow for arduino color changing.
+        self.on_swap_buffers_before = None
+        self.on_swap_buffers_after = None
+        self.on_stop = None
 
+    def register_on_swap_buffers_before(
+        self, callback: BufferSwapCallback
+    ):
+        """Register a callback for the before swap buffers event."""
+        self.on_swap_buffers_before = callback
 
-    def __del__(self):
-        try:
+    def register_on_swap_buffers_after(
+    self, callback: BufferSwapCallback
+        ):
+        """Register a callback for the after swap buffers event."""
+        self.on_swap_buffers_after = callback
 
-            ard_lock = getattr(self, "ard_lock", None)
-            arduino = getattr(self, "arduino", None)
-            if ard_lock is not None and arduino is not None:
-                try:
-                    with ard_lock:
-                        arduino.disconnect()
-                except AttributeError:
-                    pass
-        except AttributeError:
-            pass
+    def register_on_stop(self, callback: Callable[[], None]):
+        """Register a callback for the stop event."""
+        self.on_stop = callback
+
+    def notify_swap_buffers_before(self, frame_idx: int):
+        """Notify the before swap buffers event."""
+        if self.on_swap_buffers_before is not None:
+            self.on_swap_buffers_before(frame_idx)
+
+    def notify_swap_buffers_after(self, frame_idx: int):
+        """Notify the after swap buffers event."""
+        if self.on_swap_buffers_after is not None:
+            self.on_swap_buffers_after(frame_idx)
+
+    def notify_stop(self):
+        """Notify the stop event."""
+        if self.on_stop is not None:
+            self.on_stop()
 
     def run_empty(self):
         """
         Empty loop. Establishes a window filled with a grey background. Waits for
         commands from the main process (gui).
         """
-
-        # if self.mode == "lead":
-        #     self.arduino.send("W")
+        self.window.use()
         while not self.window.is_closing:
-            self.window.use()
-            # self.window.ctx.clear(0.5, 0.5, 0.5, 1.0)  # Clear the window with a grey background
-            self.window.ctx.clear(1, 1, 1, 1.0)
-
+            # Clear the window with a grey background
+            # self.window.ctx.clear(0.5, 0.5, 0.5, 1.0)
+            self.window.ctx.clear(0, 0, 0, 1.0)
             self.window.swap_buffers()  # Swap the buffers (update the window content)
             self.communicate()  # Check for commands from the main process (gui)
             time.sleep(0.001)  # Sleep for 1 ms to avoid busy waiting
@@ -188,99 +195,24 @@ class Presenter:
                 return
             command = fpspy.queue.get(self.queue)
 
+        stop = False
         match command.type:
             case "play":
-                self.stop = False
                 self.play(*command.args, **command.kwargs)
             case "white_screen":
-                self.stop = False
-                with self.ard_lock:
-                    ard_command = self.ard_queue.get()
-                    self.send_colour(ard_command)
-                    self.arduino_running = True
-                    arduino_thread = threading.Thread(
-                        target=self.receive_arduino_status
-                    )
-                    arduino_thread.start()
-            case "stop":  # If the command is "stop", stop the presentation
-                self.arduino_running = False  # Trigger the stop flag for next time
-                if self.mode == "lead":
-                    self.status_queue.put("done")
-                self.send_colour("b")
-                self.send_colour("O")
-                self.stop = True
+                pass
+            case "stop":
+                self.notify_stop()
+                self.status_queue.put("done")
+                stop = True
                 current_time = time.perf_counter()
+                # Why wait 1 second here?
                 while time.perf_counter() - current_time < 1:
                     pass
             case "destroy":
+                stop = True
                 self.window.close()  # Close the window
-        return self.stop
-
-    def receive_arduino_status(self):
-        buffer = True
-        if self.mode == "lead":
-            self.arduino.arduino.reset_input_buffer()
-            while not self.stop:
-                status = self.arduino.read()
-                if status == "Trigger":
-                    buffer = False
-                if status == "finished" and not buffer:
-                    self.arduino_running = False
-                    self.status_queue.put("done")
-                    break
-
-    def send_array(self, array):
-        """Send array string of shared memory to other processes"""
-        for _ in range(self.nr_followers):
-            self.sync_queue.put(array)
-
-    def receive_array(self):
-        """Receive array string of shared memory from lead process"""
-        return self.sync_queue.get()
-
-    def send_trigger(self):
-        """Send a trigger signal to the Arduino."""
-        if self.mode == "lead":
-            self.arduino.send_trigger()
-
-    def switch_trigger_modes(self, mode="t_s_off"):
-        """Switch the trigger mode of the Arduino."""
-        try:
-            self.arduino.send(mode)
-            self.arduino.arduino.flush()
-        except AttributeError:
-            pass
-
-    def send_colour(self, colour):
-        """Send a colour signal to the Arduino."""
-
-        self.arduino.send(colour)
-
-    def process_arduino_colours(
-        self, colours: str, change_logic: int, n_frames: int
-    ):
-        """
-        Processes the colours and calculates the necessary repeats.
-
-        Parameters
-        ----------
-        colours : str
-            A comma-separated string of colour values.
-        change_logic : int
-            The logic determining how often the colour changes.
-        frames : int
-            The total number of frames for the stimulus.
-
-        Returns
-        -------
-        list
-            A list of colours repeated and arranged as per the specified logic.
-        """
-        colours = colours.split(",")
-        colour_repeats = np.ceil(n_frames / (len(colours) * change_logic))
-        colours = np.repeat(np.asarray(colours), change_logic).tolist()
-        colours = colours * int(colour_repeats)
-        return colours
+        return stop
 
     def to_textures(self, stim: fpspy.Stim):
         """
@@ -298,7 +230,7 @@ class Presenter:
             self.window.ctx.texture(
                 (stim.width, stim.height),
                 stim.n_channels,
-                stim.frames[i, :].tobytes(),
+                stim.frames[i].tobytes(),
                 samples=0,
                 alignment=1,
             )
@@ -335,7 +267,8 @@ class Presenter:
             vertex_shader=vertex_shader_source,
             fragment_shader=fragment_shader_source,
         )
-
+        # We always use 1 texture, bound to texture unit 0.
+        program["tex"].value = self.TEXTURE_UNIT
         return program
 
     def calculate_scaling(self, width, height):
@@ -383,7 +316,6 @@ class Presenter:
             ],
             dtype=np.float32,
         )
-
         return scale_x, scale_y, quad
 
     def create_buffer_and_vao(self, quad, program):
@@ -406,10 +338,8 @@ class Presenter:
         """
         # Create a buffer from the quad vertices
         vbo = self.window.ctx.buffer(quad.tobytes())
-
         # Create a vertex array object
         vao = self.window.ctx.simple_vertex_array(program, vbo, "in_pos")
-
         return vbo, vao
 
     def setup_presentation(self, frames, loops, desired_fps):
@@ -445,14 +375,10 @@ class Presenter:
 
     def presentation_loop(
         self,
-        pattern_indices,
+        texture_idxs,
         s_frames,
         end_times,
-        nr_colours,
-        arduino_colours,
-        change_logic,
         textures,
-        program,
         vao,
     ):
         """
@@ -460,63 +386,35 @@ class Presenter:
 
         Parameters
         ----------
-        pattern_indices : list
-            List of indices indicating the order in which to present the patterns.
+        texture_idxs : list
+            Indices indicating the order in which to present the textures.
         s_frames : list
-            List of timestamps for when each frame should start.
-        arduino_colours : list
-            List of colours to be used for each frame.
-        change_logic : int
-            Logic to determine when to change the colour.
-        patterns : list
-            List of textures for each stimulus frame.
-        program : moderngl.Program
-            The shader program used for rendering.
+            Timestamps for when each frame should start.
+        textures : list
+            Textures for each stimulus frame.
         vao : moderngl.VertexArray
             The vertex array object for rendering.
         """
-        if change_logic==1:
-            self.window.ctx.clear(0, 0, 0)
-            c = arduino_colours[0]
-            self.send_colour(c)
-
-        for idx, current_pattern_index in enumerate(pattern_indices):
-            self.communicate()  
-            if self.stop:
+        # Ensure the correct context is being used.
+        self.window.use()  
+        for i, texture_idx in enumerate(texture_idxs):
+            is_exit = self.communicate()  
+            if is_exit:
                 return end_times
             # Sync frame presentation to the scheduled time.
-            while time.perf_counter() < s_frames[idx]:
-                pass  # Busy-wait until the scheduled frame time.
-
-            self.window.use()  # Ensure the correct context is being used.
-
-            #Handle colour change logic
-            if change_logic >1:
-                if current_pattern_index % change_logic == 0:
-                    c = arduino_colours[current_pattern_index]
-
-                    self.send_colour(c)  # Custom function to send colour to Arduino
+            wait_until(s_frames[i])
 
             # Clear the window and render the stimulus.
             self.window.ctx.clear(0, 0, 0)
-            textures[current_pattern_index].use(location=0)
-            # Assuming 'tex' is the uniform name in shader
-            if nr_colours > 1:
-                program["tex"].red = 0  
-                program["tex"].green = 0
-                program["tex"].blue = 0
-            else:
-                program["tex"].value = 0
+            textures[texture_idx].use(location=self.TEXTURE_UNIT)
             vao.render(moderngl.TRIANGLES)
 
-            # Swap buffers and send trigger signal.
+            # Swap buffers, wrapped by callbacks and time record.
+            self.notify_swap_buffers_before(i)
             start_time = time.perf_counter()
-
             self.window.swap_buffers()
-            self.send_trigger()  # Custom function to send a trigger signal to Arduino
-
-            # Monitor and log frame duration, if necessary
-            end_times[idx] = time.perf_counter() - start_time
+            end_times[i] = time.perf_counter() - start_time
+            self.notify_swap_buffers_after(i)
         return end_times
 
     def cleanup_and_finalize(
@@ -549,9 +447,6 @@ class Presenter:
         desired_fps : float
             The desired frames per second for the presentation.
         """
-        # Send final colour signal or perform any final communication
-        self.send_colour("O")  # Assuming 'O' is the signal for completion
-
         # Release all pattern textures
         for pattern in patterns:
             pattern.release()
@@ -571,8 +466,8 @@ class Presenter:
             wrong_frame_times = None
         else:
             # Print the dropped frames
-            print(f"dropped frames (idx): {dropped_frames[0]}")
-            print(f"wrong frame times: {wrong_frame_times}")
+            _logger.error(f"dropped frames (idx): {dropped_frames[0]}")
+            _logger.error(f"wrong frame times: {wrong_frame_times}")
 
             # Write log with the stim_dict or any other relevant information
         write_log(
@@ -583,14 +478,6 @@ class Presenter:
             dropped_frames,
             wrong_frame_times,
         )
-
-        # Run any additional emptying or resetting procedures
-        self.stop = False
-        self.arduino_running = False  # Trigger the stop flag for next time
-        # if self.mode == "lead":
-        #     with self.status_lock:
-        #         self.status_queue.put("done")
-
         return
 
     def play(self, stim_path, loops, arduino_colours, change_logic, s_frames):
@@ -609,10 +496,6 @@ class Presenter:
 
         """
         s_frames = _loop(s_frames, loops)
-
-        arduino_colours = self.process_arduino_colours(
-            arduino_colours, change_logic, len(s_frames) - 1
-        )
 
         # Load the stim data
         stim = fpspy.Stim.read_hdf5(stim_path)
@@ -646,26 +529,21 @@ class Presenter:
             delay = np.abs(delay_needed) + 10
         s_frames = s_frames + delay
 
-        print(
+        _logger.info(
             f"stimulus will start in {s_frames[0] - time.perf_counter()} seconds, "
             f"window_idx: {self.process_idx}"
         )
-        print(f"Current time is {datetime.datetime.now()}")
+        _logger.info(f"Current time is {datetime.datetime.now()}")
         end_times = np.zeros(len(s_frames))
+
         # Start the presentation loop
-        self.switch_trigger_modes("t_s_on")
         end_times = self.presentation_loop(
             pattern_indices,
             s_frames,
             end_times,
-            stim.n_channels,
-            arduino_colours,
-            change_logic,
             textures,
-            program,
             vao,
         )
-        self.switch_trigger_modes("t_s_off")
 
         # Clean up and finalize the presentation
         self.cleanup_and_finalize(
@@ -735,11 +613,7 @@ def pyglet_app_lead(
     process_idx,
     config,
     queue,
-    sync_queue,
-    sync_lock,
     lock,
-    ard_queue,
-    ard_lock,
     status_queue,
     status_lock,
     delay=10,
@@ -771,67 +645,9 @@ def pyglet_app_lead(
         process_idx,
         config,
         queue,
-        sync_queue,
-        sync_lock,
         lock,
-        ard_queue,
-        ard_lock,
         status_queue,
         status_lock,
-        mode="lead",
-        delay=delay,
-    )
-    presenter.run_empty()  # Establish the empty loop
-
-
-def pyglet_app_follow(
-    process_idx,
-    config,
-    queue,
-    sync_queue,
-    sync_lock,
-    lock,
-    ard_queue,
-    ard_lock,
-    status_queue,
-    status_lock,
-    delay=10,
-):
-    """
-    Start the pyglet app.
-
-    This function is spawns the pyglet app in a separate process.
-
-    Parameters
-    ----------
-        process_idx : int
-        Index of the process. Used to determine the window position.
-    config : dict
-        Configuration dictionary.
-        Keys:
-            width : int
-                Width of the window.
-            height : int
-                Height of the window.
-            fullscreen : bool
-                Fullscreen mode.
-            screen : int
-                Screen number.
-    queue : multiprocessing.Queue
-        Queue for communication with the main process (gui).
-    """
-    presenter = Presenter(
-        process_idx,
-        config,
-        queue,
-        sync_queue,
-        sync_lock,
-        lock,
-        ard_queue,
-        ard_lock,
-        status_queue,
-        status_lock,
-        mode="follow",
         delay=delay,
     )
     presenter.run_empty()  # Establish the empty loop
