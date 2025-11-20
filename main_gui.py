@@ -206,7 +206,7 @@ class NoiseGeneratorApp:
         # Colour Frame
         self.colour_entry = ttk.Entry(loop_frame, textvariable=self.colours, width=10)
         self.colour_entry.pack(side=tk.LEFT, padx=5)
-        self.colour_entry.insert(0, "R,G,B,U")
+        self.colour_entry.insert(0, "white")
 
         colour_frame = ttk.Frame(self.right_frame)
         colour_frame.grid(row=2, column=0, columnspan=2, pady=5, sticky=tk.W)
@@ -220,7 +220,7 @@ class NoiseGeneratorApp:
             colour_frame, textvariable=self.colour_change, width=10
         )
         self.colour_change.pack(side=tk.LEFT, padx=5)
-        self.colour_change.insert(0, "100")
+        self.colour_change.insert(0, "1")
 
         self.colour_change_frames = ttk.Label(colour_frame, text="Frames.", width=12)
         self.colour_change_frames.pack(side=tk.LEFT, padx=2)
@@ -337,9 +337,10 @@ class NoiseGeneratorApp:
                     queue_data
                 )  # Put the noise name in the queue for each window thread to read
         self.arduino_running = True
-        self.arduino_light.config(bg="green")
-        # change text of the button
-        self.arduino_light.config(text="Stim running")
+        # self.arduino_light.config(bg="green")
+        # # change text of the button
+        # self.arduino_light.config(text="Stim running")
+
 
     def on_stop_noise(self):
         """Stop the noise playback."""

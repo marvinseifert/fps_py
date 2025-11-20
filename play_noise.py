@@ -185,11 +185,10 @@ class Presenter:
                     arduino_thread.start()
 
             elif command == "stop":  # If the command is "stop", stop the presentation
-                self.arduino_running = False  # Trigger the stop flag for next time
-                self.status_queue.put("done")
 
-                self.send_colour("b")
-                self.send_colour("b")
+                self.arduino_running = False  # Trigger the stop flag for next time
+                if self.mode == "lead":
+                    self.status_queue.put("done")
                 self.send_colour("b")
                 self.send_colour("O")
                 self.stop = True
@@ -230,6 +229,7 @@ class Presenter:
         """Switch the trigger mode of the Arduino."""
 
         self.arduino.send(mode)
+        self.arduino.arduino.flush()
 
     def send_colour(self, colour):
         """Send a colour signal to the Arduino."""
@@ -545,8 +545,10 @@ class Presenter:
 
             # Swap buffers and send trigger signal
             start_time = time.perf_counter()
+
             self.window.swap_buffers()
             self.send_trigger()  # Custom function to send a trigger signal to Arduino
+
 
             # Monitor and log frame duration, if necessary
             end_times[idx] = time.perf_counter() - start_time
@@ -609,6 +611,11 @@ class Presenter:
 
         # Run any additional emptying or resetting procedures
         self.stop = False
+        self.arduino_running = False  # Trigger the stop flag for next time
+        # if self.mode == "lead":
+        #     with self.status_lock:
+        #         self.status_queue.put("done")
+
         return
 
     def play_noise(self, noise_dict):

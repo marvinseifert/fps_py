@@ -13,13 +13,13 @@ def get_windows():
     """
     windows = {
         "1": {
-            "y_shift": 1000,
-            "x_shift": 1080,
-            "window_size": (500, 500),
+            "y_shift": 0,
+            "x_shift": 1920,
+            "window_size": (1280, 800),
             "fullscreen": False,
             "style": "transparent",
-            "channels": np.array([0, 1, 2]),
-            "arduino_port": "/dev/ttyUSB0",
+            "channels": np.array([0, 0, 0]),
+            "arduino_port": "COM2",
             "arduino_baud_rate": 9600,
         },
     }

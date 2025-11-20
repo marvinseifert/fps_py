@@ -34,13 +34,13 @@ class Arduino:
         if self.connected:
             txt = f"\n{message}\n".encode("utf-8")  # Convert the colour string to bytes
             self.arduino.write(txt)
-            self.arduino.flush()
+            #self.arduino.flush()
         else:
             self.connect()
             if self.connected:
                 txt = f"\n{message}\n".encode("utf-8")
                 self.arduino.write(txt)
-                self.arduino.flush()
+                #self.arduino.flush()
             else:
                 print("Could not connect to Arduino or send message")
 
