@@ -23,7 +23,7 @@ def show_directories_help(parent_window, config):
     """
     # Get all the directories
     data_dir = Path(config["paths"]["data_dir"])
-    stimuli_dir = fpspy.config.user_stimuli_dir(config)
+    stimuli_dir = fpspy.config.user_data_dir(config)
     logs_dir = fpspy.config.user_log_dir()
     config_dir = fpspy.config.user_config_dir()
     config_file = fpspy.config.user_config_file_path()
