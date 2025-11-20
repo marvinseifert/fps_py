@@ -216,5 +216,5 @@ def _preview_hdf5_v1(f):
     n_frames, h, w, c = f["frames"][:].shape
     fps = f.attrs["fps"][()]
     metadata = dict(f["metadata"])
-    return {"n_frames": n_frames, "height": h, "width": w, "fps": fps,
+    return {"n_frames": n_frames, "height": h, "width": w, "channels": c, "fps": fps,
             "metadata": metadata}
