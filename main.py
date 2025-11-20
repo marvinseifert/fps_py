@@ -15,7 +15,7 @@ import window_settings
 windows = window_settings.get_windows()
 
 # Configuration dictionary for the pyglet app window. Change according to your needs.
-config_dict = {"windows": windows, "gl_version": (4, 1), "fps": 60}
+config_dict = {"windows": windows, "gl_version": (4, 1), "fps": 74.97}
 
 nr_windows = len(windows)
 
