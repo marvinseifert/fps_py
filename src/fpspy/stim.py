@@ -1,4 +1,4 @@
-import warnings
+import logging
 from pathlib import Path
 import h5py
 import numpy as np
@@ -7,6 +7,8 @@ import einops
 __all__ = ["Stim"]
 
 CURRENT_HDF5_FORMAT_VER = "1"
+
+_logger = logging.getLogger(__name__)
 
 
 class Stim:
@@ -27,12 +29,12 @@ class Stim:
             An optional label for the stimulus.
         metadata : dict, optional
             An optional dictionary of metadata. Things like checkerboard size
-            can go in here, which may not be applicable to all stimuli. 
+            can go in here, which may not be applicable to all stimuli.
             The metadata should be a non-nested dictionary with key-value pairs
             that are serializable with hdf5.
         """
         if frames.ndim != 4:
-            raise ValueError(f"Expected shape (f, h, w, c). Got {frames.shape=}")
+            raise ValueError(f"Expected shape (f, h, w, c). Got {frames.shape=}.")
         self.frames = frames
         self.fps = fps
         self.triggers = triggers
@@ -155,31 +157,49 @@ def _get_attr(f, key, default=None):
 
         https://docs.h5py.org/en/latest/high/dataset.html#creating-and-reading-empty-or-null-datasets-and-attributes
 
-    empty/missing values can be stored as h5py.Empty objects. The best way to
-    check for such empty values is to test the objects "shape" attribute and
-    check if it is none.
+    empty/missing values can be stored as h5py.Empty objects. The best way to check for 
+    such empty values is to test the objects "shape" attribute and check if it is none.
     """
     res = f.attrs.get(key, None)
     # This doesn't work well for me. Non empty types error.
     # if ds.shape is None:
     if res is not None:
         if isinstance(res, h5py.Empty):
-             res = None
+            res = None
     if res is None:
         res = default
     return res
 
+
 def _read_hdf5_v1(f):
+    """Load v1 format.
+
+    This is the current (experimental) format.
+
+    The presentation currently only supports presenting 8-bit sRGB images, and if the 
+    frame dtype is not uint8, it will be converted to uint8.
+    """
     ver = f.attrs["format_version"]
     if ver != "1":
-        warnings.warn(f"Expected format version 1, got {ver}")
+        _logger.warning(f"Expected format version 1, got {ver}")
     fps = f.attrs["fps"][()]
     frames = f["frames"][()]
     triggers = _get_attr(f, "triggers")
     label = _get_attr(f, "label")
     metadata = dict(f["metadata"])
+    if frames.dtype != np.uint8:
+        _logger.warning(
+            f"Expected uint8 dtype, got {frames.dtype=}. Converting to uint8."
+        )
+        frames = frames.astype(np.uint8)
 
-    return Stim(frames=frames, fps=fps, triggers=triggers, label=label, metadata=metadata)
+    return Stim(
+        frames=frames,
+        fps=fps,
+        triggers=triggers,
+        label=label,
+        metadata=metadata,
+    )
 
 
 def _read_hdf5_v0(f):
@@ -200,14 +220,18 @@ def _read_hdf5_v0(f):
 
 def _preview_hdf5_v0(f):
     """Preview the original format."""
-    n_frames, h, w  = f["Noise"][:].shape[0:3]
+    n_frames, h, w = f["Noise"][:].shape[0:3]
     fps = f["Frame_Rate"][()]
     checkerboard_size = f["Checkerboard_Size"][()]
     shuffle = f["Shuffle"][()]
-    metadata = {"checkerboard_size": checkerboard_size,
-                "shuffle": shuffle
-                }
-    return {"n_frames": n_frames, "height": h, "width": w, "fps": fps, "metadata": metadata}
+    metadata = {"checkerboard_size": checkerboard_size, "shuffle": shuffle}
+    return {
+        "n_frames": n_frames,
+        "height": h,
+        "width": w,
+        "fps": fps,
+        "metadata": metadata,
+    }
 
 
 def _preview_hdf5_v1(f):
@@ -216,5 +240,11 @@ def _preview_hdf5_v1(f):
     n_frames, h, w, c = f["frames"][:].shape
     fps = f.attrs["fps"][()]
     metadata = dict(f["metadata"])
-    return {"n_frames": n_frames, "height": h, "width": w, "channels": c, "fps": fps,
-            "metadata": metadata}
+    return {
+        "n_frames": n_frames,
+        "height": h,
+        "width": w,
+        "channels": c,
+        "fps": fps,
+        "metadata": metadata,
+    }
