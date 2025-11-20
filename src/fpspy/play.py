@@ -451,7 +451,7 @@ class Presenter:
         nr_colours,
         arduino_colours,
         change_logic,
-        patterns,
+        textures,
         program,
         vao,
     ):
@@ -485,7 +485,7 @@ class Presenter:
         for idx, current_pattern_index in enumerate(pattern_indices):
             self.communicate()  # Custom function for communication, can be modified as needed
             if self.stop:
-                del patterns
+                del textures
                 del program
                 del vao
                 return end_times
@@ -504,15 +504,14 @@ class Presenter:
 
             # Clear the window and render the stimulus
             self.window.ctx.clear(0, 0, 0)
-            patterns[current_pattern_index].use(location=0)
+            textures[current_pattern_index].use(location=0)
+            # Assuming 'tex' is the uniform name in shader
             if nr_colours > 1:
-                program["pattern"].red = (
-                    0  # Assuming 'pattern' is the uniform name in shader
-                )
-                program["pattern"].green = 0
-                program["pattern"].blue = 0
+                program["tex"].red = 0  
+                program["tex"].green = 0
+                program["tex"].blue = 0
             else:
-                program["pattern"].value = 0
+                program["tex"].value = 0
             vao.render(moderngl.TRIANGLES)
 
             # Swap buffers and send trigger signal
