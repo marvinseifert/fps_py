@@ -485,9 +485,6 @@ class Presenter:
         for idx, current_pattern_index in enumerate(pattern_indices):
             self.communicate()  # Custom function for communication, can be modified as needed
             if self.stop:
-                del textures
-                del program
-                del vao
                 return end_times
             # Sync frame presentation to the scheduled time
             while time.perf_counter() < s_frames[idx]:
