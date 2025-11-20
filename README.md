@@ -79,10 +79,27 @@ _connect_to_arduino_ and change the port to the port of your Arduino. The script
 at the specified port every noise frame. </br>
 
 **That's it, enjoy the noise!** </br>
-![Noise](noise.PNG)
+![Noise](images/noise.PNG)
 
 # Future work:
 - Implement colour noise (this is already in the shaders, just needs to be updated in the play_noise.py script)
 - Implement fullscreen on secondary monitor (this is a bug in moderngl_window) </br>
 - Expand so single boxes can be shown and moved around (experimental feature, look at the "moving_box.py" script)
 - Better exception handling
+
+
+# Dev workflow
+
+Tested with Python 3.10. You may need `pillow env use python3.10`.
+
+Install with poetry:
+
+```bash
+poetry install
+```
+
+Run, with optional config path:
+```bash
+poetry run fpspy <config-path>
+```
+
