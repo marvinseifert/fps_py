@@ -52,7 +52,7 @@ class Stim:
 
     @property
     def n_channels(self):
-        nch = 1 if self.frames.ndim == 3 else self.frames.shape[3]
+        nch = self.frames.shape[3]
         return nch
 
     def __repr__(self):
