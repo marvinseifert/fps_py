@@ -8,33 +8,12 @@ It is possible to display 2 million checkers at 30 fps.
 This is how to create and display noise. 
 
 ## Installation
-Create a new virtual environment and install the packages in requirements.txt. </br>
-
-## Setting some default parameters
-Open the main.py file and take a look at the config_dict:
-```python config_dict = {
-    "y_shift": -500,
-    "x_shift": 2560,
-    "gl_version": (4, 1),
-    "window_size": (1080, 1920),
-    "fullscreen": False}
+Clone the repository, and install the package using poetry:
+```bash
+poetry install
 ```
-Set the parameters according to your settings. </br>
-### y_shift and x_shift
-When running the program, two windows will be opened. One window is the GUI and the other is the window in which the noise will be displayed. </br>
-y_shift and x_shift are used to shift the noise window to the desired position. For example, if the noise shall be displayed on </br>
-the secondary monitor, set the x_shift to the width of the primary monitor. Setting the value for y_shift depends on how the monitors</br>
-are aligned in Windows, and setting it correctly might need some trial and error. </br>
-### gl_version
-This is the version of OpenGL to use. Should be 4, 1</br>
 
-### window_size
-This is the size of the noise window. In this case it is set so that the window fills the entire monitor. </br>
-
-### fullscreen
-If fullscreen is set to True, the noise window will be displayed in fullscreen. </br>
-**Warning** Fullscreen currently does not work on a secondary monitor. </br>
-
+Tested with Python 3.10. You may need `poetry env use python3.10`.
 
 ## Running the GUI
 To run the GUI, with optional config path, run the following command in the
@@ -65,6 +44,80 @@ poetry run fpspy-info <path-to-stim>
 
 
 ![GUI](images/gui.PNG)
+
+
+## Settings
+A configuration file is stored in:
+```bash
+<standard-config-path>/fpspy/settings.toml
+```
+On Linux and MacOS this is usually:
+
+```bash
+~/.config/fpspy/settings.toml
+```
+
+On Windows this is usually: </br>
+```bash
+C:\Users\<username>\AppData\Roaming\fpspy\settings.toml
+```
+
+Example settings.toml file:
+```toml
+# --- Global settings ---
+gl_version = [4, 1]
+fps = 75
+
+# --- Arduino settings ---
+[arduino]
+# port = "/dev/ttyUSB0"
+port = "dummy"
+baud_rate = 9600
+trigger_command = "T"
+
+
+[paths]
+# Override if you want to work from non-default directory for stimuli etc.
+data_dir = ""
+
+# --- Window definitions ---
+[windows."1"]
+y_shift = 1000
+x_shift = -1080
+window_size = [500, 500]
+fullscreen = false
+style = "transparent"
+channels = [0, 1, 2]
+
+[windows."2"]
+y_shift = 1000
+x_shift = -500
+window_size = [500, 500]
+fullscreen = false
+style = "transparent"
+channels = [0, 1, 2]
+```
+
+You can change the config path from the GUI, or by passing the config path as
+an argument when starting the GUI. If there is no config file, then 
+default settings take effect (see src/fpspy/resources/default_config.toml).
+
+### gl_version
+This is the version of OpenGL to use. Should be 4, 1</br>
+
+### y_shift and x_shift
+When running the program, two windows will be opened. One window is the GUI and the other is the window in which the noise will be displayed. </br>
+y_shift and x_shift are used to shift the noise window to the desired position. For example, if the noise shall be displayed on </br>
+the secondary monitor, set the x_shift to the width of the primary monitor. Setting the value for y_shift depends on how the monitors</br>
+are aligned in Windows, and setting it correctly might need some trial and error. </br>
+
+### window_size
+This is the size of the noise window. In this case it is set so that the window fills the entire monitor. </br>
+
+### fullscreen
+If fullscreen is set to True, the noise window will be displayed in fullscreen. </br>
+**Warning** Fullscreen currently does not work on a secondary monitor. </br>
+
 
 ## Creating noise
 The noise can be created using the parameters "checkerboard size", "window size", "noise frequency" and
@@ -110,13 +163,3 @@ at the specified port every noise frame. </br>
 - Expand so single boxes can be shown and moved around (experimental feature, look at the "moving_box.py" script)
 - Better exception handling
 
-
-# Dev workflow
-
-Tested with Python 3.10. You may need `pillow env use python3.10`.
-
-Install with poetry:
-
-```bash
-poetry install
-```
