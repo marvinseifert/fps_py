@@ -35,10 +35,33 @@ This is the size of the noise window. In this case it is set so that the window 
 If fullscreen is set to True, the noise window will be displayed in fullscreen. </br>
 **Warning** Fullscreen currently does not work on a secondary monitor. </br>
 
+
 ## Running the GUI
-To run the GUI, run the following command in the terminal: </br>
-```python main.py```
+To run the GUI, with optional config path, run the following command in the
+terminal: </br>
+```bash
+poetry run fpspy-gui [config-path]
+```
 This should open the gui window and the noise window. </br>
+
+
+## CLI
+You can also run stimuli directly from the command line:
+```bash
+poetry run fpspy <path-to-stim>
+```
+
+## 3Brain CLI
+3Brain setup currently supports the CLI only.
+```bash
+poetry run fpspy-3brain <path-to-config>
+```
+
+## Other scripts
+Show information about a stimulus file:
+```bash
+poetry run fpspy-info <path-to-stim>
+```
 
 
 ![GUI](images/gui.PNG)
@@ -97,9 +120,3 @@ Install with poetry:
 ```bash
 poetry install
 ```
-
-Run, with optional config path:
-```bash
-poetry run fpspy <config-path>
-```
-

@@ -14,6 +14,7 @@ import typer
 from pathlib import Path
 import logging
 import time
+import rich
 import fpspy.config
 import fpspy.gui
 import fpspy.play
@@ -23,6 +24,7 @@ import fpspy.queue
 
 gui_app = typer.Typer(help="fpspy GUI. Preset visual stimuli with OpenGL.")
 cli_app = typer.Typer(help="fpspy CLI. Preset visual stimuli with OpenGL.")
+info_app = typer.Typer(help="fpspy info. Show information about stimuli.")
 
 # import pydevd_pycharm
 # pydevd_pycharm.settrace('localhost', port=5679, stdout_to_server=True, stderr_to_server=True, suspend=False)
@@ -289,11 +291,40 @@ def run_cli(
     typer.echo("Stimulus playback completed.")
 
 
+@info_app.command()
+def show_info(
+        stim_path: Path = typer.Argument(
+            ...,
+            help="Path to stimulus file (.h5)",
+        ),
+):
+    """Show information about a stimulus file."""
+    # Validate stimulus path
+    if not stim_path.exists():
+        typer.echo(f"Error: stimulus file not found: {stim_path}", err=True)
+        raise typer.Exit(1)
+
+    # Load stimulus info
+    try:
+        info = fpspy.stim.Stim.preview_hdf5(stim_path)
+    except Exception as e:
+        typer.echo(f"Error loading stimulus file: {e}", err=True)
+        raise typer.Exit(1)
+
+    # Display stimulus info
+    rich.print(info)
+
+
+
 def gui():
     gui_app()
 
 def cli():
     cli_app()
+
+def info():
+    info_app()
+
 
 
 if __name__ == "__main__":
