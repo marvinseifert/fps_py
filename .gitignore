@@ -2,6 +2,7 @@
 # IDE and editor files
 .idea
 .vscode/
+.vim/
 *.swp
 *.swo
 *~
