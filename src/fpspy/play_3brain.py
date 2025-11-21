@@ -1,3 +1,12 @@
+"""3Brain presenters.
+
+Differences to play.py:
+
+  - Slimmed down presenter class that doesn't handle Arduino communication.
+  - Has support for broadcasting stimuli (1x1 textures -> full screen color).
+  - Exposes callbacks to allow for external code to hook into events like buffer swap.
+"""
+
 import csv
 import datetime
 import importlib.resources
@@ -16,21 +25,65 @@ import fpspy._logging
 _logger = logging.getLogger(__name__)
 
 
-def _loop(frames, loops):
-    """Loop the frames array a given number of times."""
-    frames_cpy = frames.copy()
-    first_frame_dur = np.diff(frames[0:2])
+def _loop(s_frames, loops):
+    """Loop the frames a given number of times.
+
+    Returns
+    -------
+    frame_idxs : np.ndarray
+        Frame indices for the looped frames.
+    s_frames : np.ndarray
+        Frame schedule for the looped frames.
+    """
+    # Frame indices.
+    idxs = np.tile(np.arange(len(s_frames)), loops)
+    # Frame schedule.
+    s_frames_cpy = s_frames.copy()
+    first_frame_dur = s_frames[1] - s_frames[0]
     for l in range(1, loops):
-        frames_cpy = np.concatenate(
+        s_frames_cpy = np.concatenate(
             (
-                frames_cpy,
-                frames + l * (frames[-1] - frames[0] + first_frame_dur),
+                s_frames_cpy,
+                s_frames + l * (s_frames[-1] - s_frames[0] + first_frame_dur),
             )
         )
-    return frames_cpy
+    assert len(idxs) == len(s_frames_cpy)
+    return idxs, s_frames_cpy
 
 
-def wait_until(target_time):
+def _delay(s_frames, delay):
+    """Add a delay to the frame schedule.
+
+    The delay must be such that the first frame is still in the future.
+
+    Returns
+    -------
+    s_frames : np.ndarray
+        Frame schedule with added delay.
+    """
+    s_frames = s_frames + delay
+    if s_frames[0] <= time.perf_counter():
+        raise Exception("Failed to start stimulus in time. Increased delay needed.")
+    return s_frames
+
+
+def _schedule_frames(t0, frames, fps):
+    """Schedule frames starting from time t0.
+
+    Returns
+    -------
+    s_frames : np.ndarray
+        Frame schedule.
+    """
+    frame_duration = 1 / fps
+    s_frames = __import__("numpy").linspace(
+        t0, t0 + frames * frame_duration, frames + 1
+    )
+    start_times = s_frames[:-1]
+    return start_times
+
+
+def _wait_until(target_time):
     """Semi-busy-wait until the target time is reached."""
     max_busy_wait_ms = 0.002
     now = time.perf_counter()
@@ -66,7 +119,6 @@ class Presenter:
         config,
         queue,
         status_queue,
-        mode,
         delay=10,
     ):
         """
@@ -94,13 +146,14 @@ class Presenter:
         self.process_idx = process_idx
         self.config = config
         self.queue = queue
-        self.mode = mode
         self.status_queue = status_queue
         self.c_channels = config["windows"][str(self.process_idx)]["channels"]
         self.delay = delay
+
         # Create a logger adapter that automatically includes window_idx
         self.logger = logging.LoggerAdapter(
             logging.getLogger(__name__), {"window_idx": self.process_idx}
+        )
         settings.WINDOW["class"] = (
             "moderngl_window.context.pyglet.Window"  # using a pyglet window
         )
@@ -111,17 +164,15 @@ class Presenter:
         settings.WINDOW["aspect_ratio"] = (
             None  # Sets the aspect ratio to the window's aspect ratio
         )
-        settings.WINDOW["fullscreen"] = config["windows"][
-            str(self.process_idx)
-        ]["fullscreen"]
+        settings.WINDOW["fullscreen"] = config["windows"][str(self.process_idx)][
+            "fullscreen"
+        ]
         settings.WINDOW["samples"] = 0
         settings.WINDOW["double_buffer"] = True
         settings.WINDOW["vsync"] = True
         settings.WINDOW["resizable"] = False
         settings.WINDOW["title"] = "Noise Presentation"
-        settings.WINDOW["style"] = config["windows"][str(self.process_idx)][
-            "style"
-        ]
+        settings.WINDOW["style"] = config["windows"][str(self.process_idx)]["style"]
 
         self.frame_duration = 1 / config["fps"]  # Calculate the frame duration
 
@@ -215,12 +266,8 @@ class Presenter:
 
         Returns
         -------
-        tuple
-            A tuple containing the loaded patterns as a 3D array, the width and height
-            of each pattern, the number of frames, and the desired frames per second
-            (fps).
+        A list of moderngl.Texture objects.
         """
-        # Establish the texture for each stimulus frame
         textures = [
             self.window.ctx.texture(
                 (stim.width, stim.height),
@@ -233,7 +280,7 @@ class Presenter:
         ]
         return textures
 
-    def setup_shader_program(self, nr_colours=1):
+    def setup_shader_program(self):
         """
         Initializes the shader program using vertex and fragment shaders.
 
@@ -242,22 +289,13 @@ class Presenter:
         moderngl.Program
             The compiled and linked shader program.
         """
-        # Load and compile vertex and fragment shaders
+        # Load shaders.
         resource_dir = importlib.resources.files("fpspy.resources")
         with (resource_dir / "vertex_shader.glsl").open("r") as vertex_file:
             vertex_shader_source = vertex_file.read()
-        if nr_colours == 1:
-            with (resource_dir / "fragment_shader.glsl").open(
-                "r"
-            ) as fragment_file:
-                fragment_shader_source = fragment_file.read()
-        else:
-            with (resource_dir / "fragment_shader_colour.glsl").open(
-                "r"
-            ) as fragment_file:
-                fragment_shader_source = fragment_file.read()
-
-        # Create and return the shader program
+        with (resource_dir / "fragment_shader_colour.glsl").open("r") as fragment_file:
+            fragment_shader_source = fragment_file.read()
+        # Compile and link the shader program.
         program = self.window.ctx.program(
             vertex_shader=vertex_shader_source,
             fragment_shader=fragment_shader_source,
@@ -266,15 +304,22 @@ class Presenter:
         program["tex"].value = self.TEXTURE_UNIT
         return program
 
-    def calculate_scaling(self, width, height):
-        """Calculates scaling factors from texture and window aspect ratios.
+    @staticmethod
+    def create_quad(stim_width, stim_height, win_width, win_height):
+        """Create a quad that has corners at each stimulus corner.
+
+        If the stimulus is 1x1 pixel, the quad covers the whole screen (broadcasting).
 
         Parameters
         ----------
+        stim_width : int
+            The width of the stimulus texture in pixels.
+        stim_height : int
+            The height of the stimulus texture in pixels.
         width : int
-            The width of the texture.
+            The width of the window in pixels.
         height : int
-            The height of the texture.
+            The height of the window in pixels.
 
         Returns
         -------
@@ -282,16 +327,20 @@ class Presenter:
             A tuple of scaling factors (scale_x, scale_y) and the quad vertices array.
         """
         # Calculate the aspect ratio of the window and the texture
-        window_width, window_height = self.window.size
-        window_aspect = window_width / window_height
-        texture_aspect = width / height
-
-        # Determine scaling factors based on aspect ratios
-
-        scale_x = width / window_width
-        scale_y = height / window_height
-        if (window_aspect == texture_aspect) & (window_aspect > 1):
+        window_aspect = win_width / win_height
+        texture_aspect = stim_width / stim_height
+        # If the stimulus has shape (f, h, w, c) == (f, 1, 1, c), we broadcast by
+        # having the single pixel cover the whole screen.
+        do_broadcast = stim_height == 1 and stim_width == 1
+        if do_broadcast:
             scale_x = scale_y = 1
+        else:
+            # Determine scaling factors based on aspect ratios
+            scale_x = stim_width / win_width
+            scale_y = stim_height / win_height
+            # TODO: what is this for?
+            if (window_aspect == texture_aspect) & (window_aspect > 1):
+                scale_x = scale_y = 1
 
         # Establish the vertices for the texture in the shader program
         quad = np.array(
@@ -311,7 +360,7 @@ class Presenter:
             ],
             dtype=np.float32,
         )
-        return scale_x, scale_y, quad
+        return quad
 
     def create_buffer_and_vao(self, quad, program):
         """
@@ -337,45 +386,7 @@ class Presenter:
         vao = self.window.ctx.simple_vertex_array(program, vbo, "in_pos")
         return vbo, vao
 
-    def setup_presentation(self, frames, loops, desired_fps):
-        """
-        Sets up the presentation parameters including time per frame and pattern indices.
-
-        Parameters
-        ----------
-        frames : int
-            The number of frames in the stimulus pattern.
-        loops : int
-            The number of times the stimulus pattern should loop.
-        desired_fps : float
-            The desired frames per second for the presentation.
-
-        Returns
-        -------
-        float
-            The time allocated per frame.
-        list
-            The list of pattern indices for the presentation loop.
-        """
-        # Calculate the time per frame for the desired FPS
-        time_per_frame = 1 / desired_fps
-
-        # Calculate the pattern indices for each frame in the loop
-        pattern_indices = np.arange(frames)  # Generate indices for each frame
-        pattern_indices = np.tile(
-            pattern_indices, loops
-        )  # Repeat indices for each loop
-
-        return time_per_frame, pattern_indices.tolist()
-
-    def presentation_loop(
-        self,
-        texture_idxs,
-        s_frames,
-        end_times,
-        textures,
-        vao,
-    ):
+    def presentation_loop(self, texture_idxs, s_frames, textures, vao):
         """
         Main loop for presenting the stimulus.
 
@@ -392,12 +403,13 @@ class Presenter:
         """
         # Ensure the correct context is being used.
         self.window.use()
+        end_times = np.zeros(len(s_frames))
         for i, texture_idx in enumerate(texture_idxs):
             is_exit = self.communicate()
             if is_exit:
                 return end_times
             # Sync frame presentation to the scheduled time.
-            wait_until(s_frames[i])
+            _wait_until(s_frames[i])
 
             # Clear the window and render the stimulus.
             self.window.ctx.clear(0, 0, 0)
@@ -419,13 +431,10 @@ class Presenter:
         vao,
         stimfile,
         loops,
-        colours,
-        change_logic,
         end_times,
         desired_fps,
     ):
-        """
-        Cleans up resources, writes logs, and runs final procedures after the presentation.
+        """Clean up resources and write logs.
 
         Parameters
         ----------
@@ -435,8 +444,10 @@ class Presenter:
             The vertex buffer object to be released.
         vao : moderngl.VertexArray
             The vertex array object to be released.
-        stim_dict : dict
-            The dictionary containing stimulus settings, used for logging purposes.
+        stimfile : str
+            Path to the stimulus file.
+        loops : int
+            Number of loops the stimulus was presented.
         end_times : list
             List of frame durations.
         desired_fps : float
@@ -468,91 +479,56 @@ class Presenter:
         write_log(
             stimfile,
             loops,
-            colours,
-            change_logic,
             dropped_frames,
             wrong_frame_times,
         )
         return
 
-    def play(self, stim_path, loops, arduino_colours, change_logic, s_frames):
+    def play(self, stim_path, loops, t0):
         """Play the stimulus file.
 
-        This function loads the stimulus file, creates a texture from it and presents it.
+        Loads the stimulus file, creates textures from it and presents them.
 
         Parameters
         ----------
             - stim_path : str
                 Path to the stimulus file.
             - loops
-            - argduino_colours
-            - change_logic
+                Number of times to loop the stimulus.
             - s_frames
-
+                The frame schedule: list of times to show each frame.
         """
-        s_frames = _loop(s_frames, loops)
-
         # Load the stim data
         stim = fpspy.Stim.read_hdf5(stim_path)
+        s_frames = _schedule_frames(t0, len(stim), stim.fps)
+        if len(stim) != len(s_frames):
+            raise ValueError(f"{len(stim)=} ≠ {len(s_frames)=}.")
+        frame_idxs, s_frames = _loop(s_frames, loops)
         supports_channel_selection = stim.n_channels > 1
         if supports_channel_selection:
             stim = stim.with_channels(self.c_channels)
         textures = self.to_textures(stim)
 
         # Establish the shader program for presenting the stimulus.
-        program = self.setup_shader_program(stim.n_channels)
-
+        program = self.setup_shader_program()
         # Calculate scaling based on aspect ratio of window and stimulus.
-        do_broadcast = stim.height == 1 and stim.width == 1
-        if do_broadcast:
-            _, _, quad = self.calculate_scaling(*self.window.size)
-        else:
-            _, _, quad = self.calculate_scaling(stim.width, stim.height)
-
+        quad = self.create_quad(stim.width, stim.height, *self.window.size)
         # Create the buffer and vertex array object for the stimulus.
         vbo, vao = self.create_buffer_and_vao(quad, program)
 
-        # Establish the time per frame for the desired fps
+        # Add delay to frames.
+        s_frames = _delay(s_frames, self.delay)
 
-        time_per_frame, pattern_indices = self.setup_presentation(
-            len(stim), loops, stim.fps
         self.logger.info(
             f"stimulus will start in {s_frames[0] - time.perf_counter()} seconds"
         )
-
-        # Synchronize the presentation
-
-        # Add buffer delay to frames:
-        delay_needed = s_frames[0] - time.perf_counter()
-        if delay_needed > 0:
-            delay = 10
-        else:
-            delay = np.abs(delay_needed) + 10
-        s_frames = s_frames + delay
-
-        end_times = np.zeros(len(s_frames))
         self.logger.info(f"Current time is {datetime.datetime.now()}")
 
         # Start the presentation loop
-        end_times = self.presentation_loop(
-            pattern_indices,
-            s_frames,
-            end_times,
-            textures,
-            vao,
-        )
-
+        end_times = self.presentation_loop(frame_idxs, s_frames, textures, vao)
         # Clean up and finalize the presentation
         self.cleanup_and_finalize(
-            textures,
-            vbo,
-            vao,
-            stim_path,
-            loops,
-            arduino_colours,
-            change_logic,
-            end_times,
-            stim.fps,
+            textures, vbo, vao, stim_path, loops, end_times, stim.fps
         )
 
 
@@ -571,16 +547,16 @@ def write_log(
     stim_dict : str
         Path to the stimulus file.
     """
-    filename_format = (
-        fpspy.config.user_log_dir()
-        / f"{stimfile}_{datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S.csv')}"
+    logfile = (
+        fpspy.config.user_log_dir() / f"{stimfile.stem}_"
+        f"{datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S.csv')}"
     )
 
     if dropped_frames is None:
         dropped_frames = []
         wrong_frame_times = []
 
-    with open(filename_format, "a", newline="") as f:
+    with open(logfile, "a", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(
             [
@@ -606,7 +582,7 @@ def write_log(
         )
 
 
-def pyglet_app_lead(
+def pyglet_app(
     process_idx,
     config,
     queue,
@@ -639,56 +615,15 @@ def pyglet_app_lead(
     log_level : str
         Logging level for this process (DEBUG, INFO, WARNING, ERROR, CRITICAL).
     """
-    presenter = Presenter(
-        process_idx,
-        config,
-        queue,
-        status_queue,
-        mode="lead",
-        delay=delay,
-    )
-    presenter.run_empty()
-
     # Configure logging for this child process
     # Each process needs its own logging configuration
     fpspy._logging.setup_logging(log_level)
 
-def pyglet_app_follow(
-    process_idx,
-    config,
-    queue,
-    status_queue,
-    delay=10,
-):
-    """
-    Start the pyglet app.
-
-    This function is spawns the pyglet app in a separate process.
-
-    Parameters
-    ----------
-        process_idx : int
-        Index of the process. Used to determine the window position.
-    config : dict
-        Configuration dictionary.
-        Keys:
-            width : int
-                Width of the window.
-            height : int
-                Height of the window.
-            fullscreen : bool
-                Fullscreen mode.
-            screen : int
-                Screen number.
-    queue : multiprocessing.Queue
-        Queue for communication with the main process (gui).
-    """
     presenter = Presenter(
         process_idx,
         config,
         queue,
         status_queue,
-        mode="follow",
         delay=delay,
     )
     presenter.run_empty()

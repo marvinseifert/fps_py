@@ -36,6 +36,12 @@ def run_gui(
         f"config from {fpspy.config.user_config_dir()}. If that fails, an "
         "bundled default is used.",
     ),
+    delay: float = typer.Option(
+        2.0,
+        "--delay",
+        "-d",
+        help="Delay before starting the stimulus presentation (in seconds)",
+    ),
     log_level: str = typer.Option(
         "INFO",
         "--log-level",
@@ -52,9 +58,6 @@ def run_gui(
     config = fpspy.config.load_config(config_path)
     n_windows = len(config["windows"])
 
-    # Delay between loading the stimulus and the start of the presentation, in seconds.
-    presentation_delay = 10
-
     # Start the GUI and the stimulus presentation in separate processes.
     cmd_queue = mp.Queue()  
     status_queue = mp.Queue()
@@ -70,13 +73,13 @@ def run_gui(
     )
     # Presentation lead process
     p2 = mp.Process(
-        target=fpspy.play_3brain.pyglet_app_lead,
+        target=fpspy.play_3brain.pyglet_app,
         args=(
             1,
             config,
             cmd_queue,
             status_queue,
-            presentation_delay,
+            delay,
             log_level,
         ),
     )  # Start the pyglet app
@@ -88,27 +91,22 @@ def run_gui(
     follow_processes = []
     for idx in range(2, n_windows + 1):
         p = mp.Process(
-            target=fpspy.play_3brain.pyglet_app_follow,
+            target=fpspy.play_3brain.pyglet_app,
             args=(
                 idx,
                 config,
                 cmd_queue,
                 status_queue,
-                presentation_delay,
+                delay,
                 log_level,
             ),
         )
         p.start()
         follow_processes.append(p)
 
-    # p4.start()
-
     # Wait for the processes to finish
-    p1.join()
-    p2.join()
-    for p in follow_processes:
+    for p in [p1, p2] + follow_processes:
         p.join()
-    # p4.join()
 
 
 @cli_app.command()
@@ -131,15 +129,11 @@ def run_cli(
         "-l",
         help="Number of times to loop the stimulus",
     ),
-    arduino_colours: str = typer.Option(
-        "R,G,B,U",
-        "--colours",
-        help="Arduino colour logic (e.g., R,G,B,U)",
-    ),
-    change_every: int = typer.Option(
-        100,
-        "--change-every",
-        help="Change colour logic every N frames",
+    delay: float = typer.Option(
+        2.0,
+        "--delay",
+        "-d",
+        help="Delay before starting the stimulus presentation (in seconds)",
     ),
     log_level: str = typer.Option(
         "INFO",
@@ -156,37 +150,22 @@ def run_cli(
     # Load configuration.
     config = fpspy.config.load_config(config_path)
     n_windows = len(config["windows"])
-    # Validate stimulus path
+    # Load stimulus.
     if not stim_path.exists():
         typer.echo(f"Error: stimulus file not found: {stim_path}", err=True)
         raise typer.Exit(1)
-
-    # Load stimulus info
     try:
         info = fpspy.stim.Stim.preview_hdf5(stim_path)
     except Exception as e:
         typer.echo(f"Error loading stimulus file: {e}", err=True)
         raise typer.Exit(1)
 
-    # Schedule frames
-    def schedule_frames(frames, frame_rate):
-        current_time = time.perf_counter()
-        fps = frame_rate
-        frame_duration = 1 / fps
-        s_frames = __import__('numpy').linspace(
-            current_time, current_time + frames * frame_duration, frames + 1
-        )
-        return s_frames
-
-    s_frames = schedule_frames(info["n_frames"], info["fps"])
-
-    # Delay between loading the stimulus and the start of the presentation, in seconds.
-    presentation_delay = 10
-
     # Create queues for inter-process communication
     cmd_queue = mp.Queue()
     status_queue = mp.Queue()
 
+    # Create a reference time point
+    t0 = time.perf_counter()
     # Put play command in queue for all windows
     for _ in range(n_windows):
         fpspy.queue.put(
@@ -194,9 +173,7 @@ def run_cli(
             "play",
             stim_path=stim_path,
             loops=loops,
-            arduino_colours=arduino_colours,
-            change_logic=change_every,
-            s_frames=s_frames,
+            t0=t0,
         )
 
     typer.echo(f"Playing stimulus: {stim_path}")
@@ -204,13 +181,13 @@ def run_cli(
 
     # Start presentation lead process
     p_lead = mp.Process(
-        target=fpspy.play_3brain.pyglet_app_lead,
+        target=fpspy.play_3brain.pyglet_app,
         args=(
             1,
             config,
             cmd_queue,
             status_queue,
-            presentation_delay,
+            delay,
             log_level,
         ),
     )
@@ -220,13 +197,13 @@ def run_cli(
     follow_processes = []
     for idx in range(2, n_windows + 1):
         p = mp.Process(
-            target=fpspy.play_3brain.pyglet_app_follow,
+            target=fpspy.play_3brain.pyglet_app,
             args=(
                 idx,
                 config,
                 cmd_queue,
                 status_queue,
-                presentation_delay,
+                delay,
                 log_level,
             ),
         )
