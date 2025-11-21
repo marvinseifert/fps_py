@@ -71,7 +71,7 @@ def user_log_dir() -> Path:
     path = Path(
         platformdirs.user_log_dir(appname=APP_NAME, appauthor=APP_AUTHOR)
     )
-    path.mkdir(parents=True, exist_ok=True)
+    path.mkdir(parents=False, exist_ok=True)
     return path
 
 

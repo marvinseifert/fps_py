@@ -209,6 +209,8 @@ def run_cli(
         s_frames = __import__('numpy').linspace(
             current_time, current_time + frames * frame_duration, frames + 1
         )
+        # Don't need the last timestamp
+        s_frames = s_frames[:-1]
         return s_frames
 
     s_frames = schedule_frames(info["n_frames"], info["fps"])
