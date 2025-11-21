@@ -135,19 +135,6 @@ class Presenter:
                 baud_rate=9600,
             )
 
-
-    def __del__(self):
-        try:
-
-            arduino = getattr(self, "arduino", None)
-            if arduino is not None:
-                try:
-                    arduino.disconnect()
-                except AttributeError:
-                    pass
-        except AttributeError:
-            pass
-
     def run_empty(self):
         """
         Empty loop. Establishes a window filled with a grey background. Waits for

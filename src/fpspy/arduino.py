@@ -105,6 +105,9 @@ class Arduino:
             self.connected = False
             print("Arduino disconnected")
 
+    def __del__(self):
+        self.disconnect()
+
 
 class DummyArduino:
     def __init__(self, port="COM3", baud_rate=9600):
