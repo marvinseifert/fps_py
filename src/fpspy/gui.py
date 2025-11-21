@@ -31,11 +31,8 @@ class FpspyGui:
         root: tk.Tk,
         config: dict,
         queue1: Queue,
-        lock: threading.Lock,
         ard_queue: Queue,
-        ard_lock: threading.Lock,
         status_queue: Queue,
-        status_lock: threading.Lock,
         nr_processes: int = 1,
     ):
         """
@@ -48,12 +45,9 @@ class FpspyGui:
 
         """
         self.config = config
-        self.lock = lock
         self.queue1 = queue1
         self.ard_queue = ard_queue
-        self.ard_lock = ard_lock
         self.status_queue = status_queue
-        self.status_lock = status_lock
         self.root = root
         self.nr_processes = nr_processes
         self.root.title("Fpspy GUI")
@@ -356,16 +350,15 @@ class FpspyGui:
         info = fpspy.Stim.preview_hdf5(stim_path)
         s_frames = schedule_frames(info["n_frames"], info["fps"])
 
-        with self.lock:
-            for _ in range(self.nr_processes):
-                # Put the stimulus name in the queue for each window thread to read.
-                fpspy.queue.put(self.queue1, "play",
-                    stim_path=stim_path,
-                    loops=int(self.loop_entry.get()),
-                    arduino_colours=self.colours.get(),
-                    change_logic=int(self.colour_change.get()),
-                    s_frames=s_frames,
-                )
+        for _ in range(self.nr_processes):
+            # Put the stimulus name in the queue for each window thread to read.
+            fpspy.queue.put(self.queue1, "play",
+                stim_path=stim_path,
+                loops=int(self.loop_entry.get()),
+                arduino_colours=self.colours.get(),
+                change_logic=int(self.colour_change.get()),
+                s_frames=s_frames,
+            )
         self.arduino_running = True
         # self.arduino_light.config(bg="green")
         # # change text of the button
@@ -373,10 +366,9 @@ class FpspyGui:
 
     def on_stop_stim(self):
         """Stop the stimulus playback."""
-        with self.lock:
-            for _ in range(self.nr_processes):
-                fpspy.queue.put(self.queue1, "stop")
-                # Put "stop" in the queue for the pyglet thread to read
+        for _ in range(self.nr_processes):
+            fpspy.queue.put(self.queue1, "stop")
+            # Put "stop" in the queue for the pyglet thread to read
         self.arduino_done_callback()
         self.update_status("Stimulus stopped")
 
@@ -464,48 +456,42 @@ class FpspyGui:
         # change text of the button
         self.arduino_light.config(text="Stim running")
 
-        with self.lock:
-            for _ in range(self.nr_processes):
-                fpspy.queue.send(self.queue1, "white_screen")
-        with self.ard_lock:
-            self.ard_queue.put(self.arduino_cmd_var.get())
-            arduino_thread = threading.Thread(target=self.arduino_done_callback)
-            self.root.after(100, arduino_thread.start)
+        for _ in range(self.nr_processes):
+            fpspy.queue.send(self.queue1, "white_screen")
+        self.ard_queue.put(self.arduino_cmd_var.get())
+        arduino_thread = threading.Thread(target=self.arduino_done_callback)
+        self.root.after(100, arduino_thread.start)
         return
 
     def arduino_done_callback(self):
         while self.arduino_running:
-            with self.status_lock:
-                if not self.status_queue.empty():
-                    status = self.status_queue.get()
-                    if status == "done":
-                        self.arduino_light.config(bg="red")
-                        self.arduino_light.config(text="no stim")
-                        self.arduino_running = False
-                        break
-                else:
-                    time.sleep(0.1)  # Avoid busy-waiting
+            if not self.status_queue.empty():
+                status = self.status_queue.get()
+                if status == "done":
+                    self.arduino_light.config(bg="red")
+                    self.arduino_light.config(text="no stim")
+                    self.arduino_running = False
+                    break
+            else:
+                time.sleep(0.1)  # Avoid busy-waiting
 
         # Clear any remaining messages in the queue
-        with self.status_lock:
-            while not self.status_queue.empty():
-                self.status_queue.get()
+        while not self.status_queue.empty():
+            self.status_queue.get()
 
     def stop_arduino(self, *args):
         """Stop the arduino."""
         # self.arduino_spinner.stop()
-        with self.lock:
-            # Drain any pending items in the queue so "stop" is processed next
-            try:
-                while True:
-                    self.queue1.get_nowait()
-            except Exception:
-                pass
-            for _ in range(self.nr_processes):
-                fpspy.queue.put(self.queue1, "stop")
+        # Drain any pending items in the queue so "stop" is processed next
+        try:
+            while True:
+                self.queue1.get_nowait()
+        except Exception:
+            pass
+        for _ in range(self.nr_processes):
+            fpspy.queue.put(self.queue1, "stop")
         # self.arduino_running = False
-        # with self.status_lock:
-        #     self.status_queue.get()
+        # self.status_queue.get()
         # self.arduino_light.config(bg="red")
 
     def show_help(self):
@@ -599,22 +585,18 @@ class FpspyGui:
         """Called when the window is closed."""
         # Can add cleanup here if needed
         # Disconnect Arduino
-        with self.ard_lock:
-            self.ard_queue.put("destroy")
-        with self.lock:
-            for _ in range(self.nr_processes):
-                # Put "stop" in the queue for the pyglet thread to read
-                fpspy.queue.put(self.queue1, "stop")
-                # Put "destroy" in the queue for the pyglet thread.
-                fpspy.queue.put(self.queue1, "destroy")
+        self.ard_queue.put("destroy")
+        for _ in range(self.nr_processes):
+            # Put "stop" in the queue for the pyglet thread to read
+            fpspy.queue.put(self.queue1, "stop")
+            # Put "destroy" in the queue for the pyglet thread.
+            fpspy.queue.put(self.queue1, "destroy")
 
         # Will be read by the pyglet thread to close the window.
         self.root.destroy()
 
 
-def tkinter_app(
-    config, queue1, lock, ard_queue, ard_lock, status_queue, status_lock, nr_processes
-):
+def tkinter_app(config, queue1, ard_queue, status_queue, nr_processes):
     """Create the tkinter GUI and run the mainloop. Used to run the GUI in a separate
     process.
 
@@ -626,7 +608,7 @@ def tkinter_app(
 
     root = tk.Tk()  # Create the root window
     app = FpspyGui(
-        root, config, queue1, lock, ard_queue, ard_lock, status_queue, status_lock, nr_processes
+        root, config, queue1, ard_queue, status_queue, nr_processes
     )  # Create the NoiseGeneratorApp instance
     root.protocol(
         "WM_DELETE_WINDOW", app.on_close

@@ -9,7 +9,7 @@ Author: Marvin Seifert
 # import pydevd_pycharm
 # pydevd_pycharm.settrace('localhost', port=5678, stdout_to_server=True, stderr_to_server=True)
 
-from multiprocessing import Process, Queue, Lock
+from multiprocessing import Process, Queue
 import typer
 from pathlib import Path
 import logging
@@ -66,23 +66,16 @@ def run_gui(
     sync_queue = (
         Queue()
     )  # Queue for synchronization between the presentation processes.
-    sync_lock = Lock()
-    queue_lock = Lock()
     arduino_queue = Queue()
-    arduino_lock = Lock()
     status_queue = Queue()
-    status_lock = Lock()
     # Gui process
     p1 = Process(
         target=fpspy.gui.tkinter_app,
         args=(
             config,
             queue1,
-            queue_lock,
             arduino_queue,
-            arduino_lock,
             status_queue,
-            status_lock,
             n_windows,
         ),
     )
@@ -94,12 +87,8 @@ def run_gui(
             config,
             queue1,
             sync_queue,
-            sync_lock,
-            queue_lock,
             arduino_queue,
-            arduino_lock,
             status_queue,
-            status_lock,
             presentation_delay,
         ),
     )  # Start the pyglet app
@@ -117,12 +106,8 @@ def run_gui(
                 config,
                 queue1,
                 sync_queue,
-                sync_lock,
-                queue_lock,
                 arduino_queue,
-                arduino_lock,
                 status_queue,
-                status_lock,
                 presentation_delay,
             ),
         )
@@ -221,25 +206,20 @@ def run_cli(
     # Create queues for inter-process communication
     queue1 = Queue()
     sync_queue = Queue()
-    sync_lock = Lock()
-    queue_lock = Lock()
     arduino_queue = Queue()
-    arduino_lock = Lock()
     status_queue = Queue()
-    status_lock = Lock()
 
     # Put play command in queue for all windows
-    with queue_lock:
-        for _ in range(n_windows):
-            fpspy.queue.put(
-                queue1,
-                "play",
-                stim_path=stim_path,
-                loops=loops,
-                arduino_colours=arduino_colours,
-                change_logic=change_every,
-                s_frames=s_frames,
-            )
+    for _ in range(n_windows):
+        fpspy.queue.put(
+            queue1,
+            "play",
+            stim_path=stim_path,
+            loops=loops,
+            arduino_colours=arduino_colours,
+            change_logic=change_every,
+            s_frames=s_frames,
+        )
 
     typer.echo(f"Playing stimulus: {stim_path}")
     typer.echo(f"  Frames: {info['n_frames']}, FPS: {info['fps']}, Loops: {loops}")
@@ -252,12 +232,8 @@ def run_cli(
             config,
             queue1,
             sync_queue,
-            sync_lock,
-            queue_lock,
             arduino_queue,
-            arduino_lock,
             status_queue,
-            status_lock,
             presentation_delay,
         ),
     )
@@ -273,12 +249,8 @@ def run_cli(
                 config,
                 queue1,
                 sync_queue,
-                sync_lock,
-                queue_lock,
                 arduino_queue,
-                arduino_lock,
                 status_queue,
-                status_lock,
                 presentation_delay,
             ),
         )

@@ -4,7 +4,7 @@
 # import pydevd_pycharm
 # pydevd_pycharm.settrace('localhost', port=5678, stdout_to_server=True, stderr_to_server=True)
 
-from multiprocessing import Process, Queue, Lock
+from multiprocessing import Process, Queue
 from main_gui import tkinter_app
 from play_noise import pyglet_app_lead, pyglet_app_follow
 import window_settings
@@ -26,22 +26,15 @@ presentation_delay = 10  # Delay between loading of the stimulus to the start of
 if __name__ == "__main__":
     queue1 = Queue()  # Queue for communication between all processes
     sync_queue = Queue()  # Queue for synchronization between the presentation processes
-    sync_lock = Lock()
-    queue_lock = Lock()
     arduino_queue = Queue()
-    arduino_lock = Lock()
     status_queue = Queue()
-    status_lock = Lock()
     # Gui process
     p1 = Process(
         target=tkinter_app,
         args=(
             queue1,
-            queue_lock,
             arduino_queue,
-            arduino_lock,
             status_queue,
-            status_lock,
             nr_windows,
         ),
     )
@@ -53,12 +46,8 @@ if __name__ == "__main__":
             config_dict,
             queue1,
             sync_queue,
-            sync_lock,
-            queue_lock,
             arduino_queue,
-            arduino_lock,
             status_queue,
-            status_lock,
             presentation_delay,
         ),
     )  # Start the pyglet app
@@ -76,12 +65,8 @@ if __name__ == "__main__":
                 config_dict,
                 queue1,
                 sync_queue,
-                sync_lock,
-                queue_lock,
                 arduino_queue,
-                arduino_lock,
                 status_queue,
-                status_lock,
                 presentation_delay,
             ),
         )

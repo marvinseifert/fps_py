@@ -46,12 +46,8 @@ class Presenter:
         config_dict,
         queue,
         sync_queue,
-        sync_lock,
-        lock,
         ard_queue,
-        ard_lock,
         status_queue,
-        status_lock,
         mode,
         delay=10,
     ):
@@ -81,13 +77,9 @@ class Presenter:
         self.config_dict = config_dict
         self.queue = queue
         self.sync_queue = sync_queue
-        self.sync_lock = sync_lock
-        self.lock = lock
         self.mode = mode
         self.ard_queue = ard_queue
-        self.ard_lock = ard_lock
         self.status_queue = status_queue
-        self.status_lock = status_lock
         self.nr_followers = len(config_dict["windows"].keys()) - 1
         self.c_channels = config_dict["windows"][str(self.process_idx)][
             "channels"
@@ -136,28 +128,21 @@ class Presenter:
                 trigger_command=fpspy.config.get_arduino_trigger_command(
                     config_dict
                 ),
-                queue=ard_queue,
-                queue_lock=ard_lock,
             )
         else:
             self.arduino = fpspy.arduino.DummyArduino(
                 port="COM_TEST",
                 baud_rate=9600,
-                queue=ard_queue,
-                queue_lock=ard_lock,
-
             )
 
 
     def __del__(self):
         try:
 
-            ard_lock = getattr(self, "ard_lock", None)
             arduino = getattr(self, "arduino", None)
-            if ard_lock is not None and arduino is not None:
+            if arduino is not None:
                 try:
-                    with ard_lock:
-                        arduino.disconnect()
+                    arduino.disconnect()
                 except AttributeError:
                     pass
         except AttributeError:
@@ -183,10 +168,9 @@ class Presenter:
 
     def communicate(self):
         """Check and execute commands from the main process (gui)."""
-        with self.lock:
-            if self.queue.empty():
-                return
-            command = fpspy.queue.get(self.queue)
+        if self.queue.empty():
+            return
+        command = fpspy.queue.get(self.queue)
 
         match command.type:
             case "play":
@@ -194,14 +178,13 @@ class Presenter:
                 self.play(*command.args, **command.kwargs)
             case "white_screen":
                 self.stop = False
-                with self.ard_lock:
-                    ard_command = self.ard_queue.get()
-                    self.send_colour(ard_command)
-                    self.arduino_running = True
-                    arduino_thread = threading.Thread(
-                        target=self.receive_arduino_status
-                    )
-                    arduino_thread.start()
+                ard_command = self.ard_queue.get()
+                self.send_colour(ard_command)
+                self.arduino_running = True
+                arduino_thread = threading.Thread(
+                    target=self.receive_arduino_status
+                )
+                arduino_thread.start()
             case "stop":  # If the command is "stop", stop the presentation
                 self.arduino_running = False  # Trigger the stop flag for next time
                 if self.mode == "lead":
@@ -219,7 +202,7 @@ class Presenter:
     def receive_arduino_status(self):
         buffer = True
         if self.mode == "lead":
-            self.arduino.arduino.reset_input_buffer()
+            self.arduino.reset_input()
             while not self.stop:
                 status = self.arduino.read()
                 if status == "Trigger":
@@ -247,13 +230,12 @@ class Presenter:
         """Switch the trigger mode of the Arduino."""
         try:
             self.arduino.send(mode)
-            self.arduino.arduino.flush()
+            self.arduino.flush()
         except AttributeError:
             pass
 
     def send_colour(self, colour):
         """Send a colour signal to the Arduino."""
-
         self.arduino.send(colour)
 
     def process_arduino_colours(
@@ -588,8 +570,7 @@ class Presenter:
         self.stop = False
         self.arduino_running = False  # Trigger the stop flag for next time
         # if self.mode == "lead":
-        #     with self.status_lock:
-        #         self.status_queue.put("done")
+        #   self.status_queue.put("done")
 
         return
 
@@ -736,12 +717,8 @@ def pyglet_app_lead(
     config,
     queue,
     sync_queue,
-    sync_lock,
-    lock,
     ard_queue,
-    ard_lock,
     status_queue,
-    status_lock,
     delay=10,
 ):
     """
@@ -772,12 +749,8 @@ def pyglet_app_lead(
         config,
         queue,
         sync_queue,
-        sync_lock,
-        lock,
         ard_queue,
-        ard_lock,
         status_queue,
-        status_lock,
         mode="lead",
         delay=delay,
     )
@@ -789,12 +762,8 @@ def pyglet_app_follow(
     config,
     queue,
     sync_queue,
-    sync_lock,
-    lock,
     ard_queue,
-    ard_lock,
     status_queue,
-    status_lock,
     delay=10,
 ):
     """
@@ -825,12 +794,8 @@ def pyglet_app_follow(
         config,
         queue,
         sync_queue,
-        sync_lock,
-        lock,
         ard_queue,
-        ard_lock,
         status_queue,
-        status_lock,
         mode="follow",
         delay=delay,
     )
