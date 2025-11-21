@@ -12,13 +12,13 @@ Author: Marvin Seifert
 import multiprocessing as mp
 import typer
 from pathlib import Path
-import logging
 import time
 import fpspy.config
 import fpspy.gui
 import fpspy.play_3brain
 import fpspy.stim
 import fpspy.queue
+import fpspy._logging as _logging
 
 
 gui_app = typer.Typer(help="fpspy GUI. Preset visual stimuli with OpenGL.")
@@ -44,14 +44,10 @@ def run_gui(
         case_sensitive=False,
     ),
 ):
-    # Configure logging
-    numeric_level = getattr(logging, log_level.upper(), None)
-    if not isinstance(numeric_level, int):
-        raise typer.BadParameter(f"Invalid log level: {log_level}")
-    logging.basicConfig(
-        level=numeric_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    try:
+        _logging.setup_logging(log_level)
+    except ValueError as e:
+        raise typer.BadParameter(str(e))
 
     config = fpspy.config.load_config(config_path)
     n_windows = len(config["windows"])
@@ -81,6 +77,7 @@ def run_gui(
             cmd_queue,
             status_queue,
             presentation_delay,
+            log_level,
         ),
     )  # Start the pyglet app
     # Start the processes
@@ -98,6 +95,7 @@ def run_gui(
                 cmd_queue,
                 status_queue,
                 presentation_delay,
+                log_level,
             ),
         )
         p.start()
@@ -151,16 +149,11 @@ def run_cli(
     ),
 ):
     """Run a stimulus from the command line without the GUI."""
-    # Configure logging
-    numeric_level = getattr(logging, log_level.upper(), None)
-    if not isinstance(numeric_level, int):
-        raise typer.BadParameter(f"Invalid log level: {log_level}")
-    logging.basicConfig(
-        level=numeric_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
-
-    # Load config
+    try:
+        _logging.setup_logging(log_level)
+    except ValueError as e:
+        raise typer.BadParameter(str(e))
+    # Load configuration.
     config = fpspy.config.load_config(config_path)
     n_windows = len(config["windows"])
     # Validate stimulus path
@@ -218,6 +211,7 @@ def run_cli(
             cmd_queue,
             status_queue,
             presentation_delay,
+            log_level,
         ),
     )
     p_lead.start()
@@ -233,6 +227,7 @@ def run_cli(
                 cmd_queue,
                 status_queue,
                 presentation_delay,
+                log_level,
             ),
         )
         p.start()

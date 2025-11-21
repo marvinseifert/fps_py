@@ -10,6 +10,7 @@ from moderngl_window.conf import settings
 import numpy as np
 import fpspy.config
 import fpspy.queue
+import fpspy._logging
 
 
 _logger = logging.getLogger(__name__)
@@ -97,6 +98,9 @@ class Presenter:
         self.status_queue = status_queue
         self.c_channels = config["windows"][str(self.process_idx)]["channels"]
         self.delay = delay
+        # Create a logger adapter that automatically includes window_idx
+        self.logger = logging.LoggerAdapter(
+            logging.getLogger(__name__), {"window_idx": self.process_idx}
         settings.WINDOW["class"] = (
             "moderngl_window.context.pyglet.Window"  # using a pyglet window
         )
@@ -457,8 +461,8 @@ class Presenter:
             wrong_frame_times = None
         else:
             # Print the dropped frames
-            _logger.error(f"dropped frames (idx): {dropped_frames[0]}")
-            _logger.error(f"wrong frame times: {wrong_frame_times}")
+            self.logger.error(f"dropped frames (idx): {dropped_frames[0]}")
+            self.logger.error(f"wrong frame times: {wrong_frame_times}")
 
             # Write log with the stim_dict or any other relevant information
         write_log(
@@ -512,6 +516,8 @@ class Presenter:
 
         time_per_frame, pattern_indices = self.setup_presentation(
             len(stim), loops, stim.fps
+        self.logger.info(
+            f"stimulus will start in {s_frames[0] - time.perf_counter()} seconds"
         )
 
         # Synchronize the presentation
@@ -524,12 +530,8 @@ class Presenter:
             delay = np.abs(delay_needed) + 10
         s_frames = s_frames + delay
 
-        _logger.info(
-            f"stimulus will start in {s_frames[0] - time.perf_counter()} seconds, "
-            f"window_idx: {self.process_idx}"
-        )
-        _logger.info(f"Current time is {datetime.datetime.now()}")
         end_times = np.zeros(len(s_frames))
+        self.logger.info(f"Current time is {datetime.datetime.now()}")
 
         # Start the presentation loop
         end_times = self.presentation_loop(
@@ -610,6 +612,7 @@ def pyglet_app_lead(
     queue,
     status_queue,
     delay=10,
+    log_level="INFO",
 ):
     """
     Start the pyglet app.
@@ -633,6 +636,8 @@ def pyglet_app_lead(
                 Screen number.
     queue : multiprocessing.Queue
         Queue for communication with the main process (gui).
+    log_level : str
+        Logging level for this process (DEBUG, INFO, WARNING, ERROR, CRITICAL).
     """
     presenter = Presenter(
         process_idx,
@@ -644,6 +649,9 @@ def pyglet_app_lead(
     )
     presenter.run_empty()
 
+    # Configure logging for this child process
+    # Each process needs its own logging configuration
+    fpspy._logging.setup_logging(log_level)
 
 def pyglet_app_follow(
     process_idx,
