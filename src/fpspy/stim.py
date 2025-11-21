@@ -135,6 +135,7 @@ class Stim:
                 raise ValueError(f"Unsupported HDF5 format version: {ver}")
 
 
+
 def _write_hdf5_v1(stim: Stim, f):
     f.attrs["format_version"] = "1"
     label = stim.label if stim.label is not None else h5py.Empty("f")
@@ -238,10 +239,12 @@ def _preview_hdf5_v1(f):
     """Preview the v1."""
     # Convention is to always have 4 dims.
     n_frames, h, w, c = f["frames"][:].shape
+    n_triggers = f["triggers"].shape[0]
     fps = f.attrs["fps"][()]
     metadata = dict(f["metadata"])
     return {
         "n_frames": n_frames,
+        "n_triggers": n_triggers,
         "height": h,
         "width": w,
         "channels": c,
