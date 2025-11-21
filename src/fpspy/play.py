@@ -180,6 +180,7 @@ class Presenter:
                 self.send_colour("O")
                 self.stop = True
                 current_time = time.perf_counter()
+                # Wait for 1 second to ensure that the serial communication is finished.
                 while time.perf_counter() - current_time < 1:
                     pass
             case "destroy":
