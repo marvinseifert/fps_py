@@ -1,3 +1,5 @@
+"""Connect and communicate with Arduino devices over serial."""
+
 import serial
 
 
@@ -12,7 +14,14 @@ def connect_to_arduino(port="COM3", baud_rate=9600):
 
 
 class Arduino:
-    def __init__(self, port="COM3", baud_rate=9600, trigger_command="T", queue=None, queue_lock=None):
+    def __init__(
+        self,
+        port="COM3",
+        baud_rate=9600,
+        trigger_command="T",
+        queue=None,
+        queue_lock=None,
+    ):
         self.port = port
         self.baud_rate = baud_rate
         self.trigger_command = trigger_command
@@ -35,13 +44,13 @@ class Arduino:
         if self.connected:
             txt = f"\n{message}\n".encode("utf-8")  # Convert the colour string to bytes
             self.arduino.write(txt)
-            #self.arduino.flush()
+            # self.arduino.flush()
         else:
             self.connect()
             if self.connected:
                 txt = f"\n{message}\n".encode("utf-8")
                 self.arduino.write(txt)
-                #self.arduino.flush()
+                # self.arduino.flush()
             else:
                 print("Could not connect to Arduino or send message")
 
@@ -83,16 +92,13 @@ class DummyArduino:
         self.queue_lock = queue_lock
         self.connected = True  # pretend it's always connected
 
-
     def connect(self):
         # no real connection, just mark as connected
         self.connected = True
 
-
     def send(self, message):
         # mimic the same interface, but only log
         txt = f"\n{message}\n".encode("utf-8")
-
 
     def read(self):
         # return None or some test data
