@@ -23,6 +23,7 @@ class Arduino:
     The class is _not_ process-safe: don't try to open the same Arduino from multiple
     processes.
     """
+
     def __init__(
         self,
         port="COM3",
@@ -50,7 +51,8 @@ class Arduino:
         """Send a message to the Arduino."""
         with self._lock:
             if self.connected:
-                txt = f"\n{message}\n".encode("utf-8")  # Convert the colour string to bytes
+                # Convert the colour string to bytes
+                txt = f"\n{message}\n".encode("utf-8")
                 self._serial.write(txt)
                 # self._serial.flush()
             else:
@@ -87,7 +89,6 @@ class Arduino:
                 except Exception:
                     pass
             return last_line
-
 
     def reset_input(self):
         with self._lock:
