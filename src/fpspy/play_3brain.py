@@ -12,7 +12,7 @@ import datetime
 import importlib.resources
 import logging
 import time
-from typing import Callable
+from typing import Callable, Optional
 import moderngl
 import moderngl_window
 from moderngl_window.conf import settings
@@ -20,35 +20,71 @@ import numpy as np
 import fpspy.config
 import fpspy.queue
 import fpspy._logging
+import fpspy.arduino
 
 
 _logger = logging.getLogger(__name__)
 
 
-def _loop(s_frames, loops):
-    """Loop the frames a given number of times.
+def _loop(s_frames, triggers, n_loops):
+    """Repeat the frames and triggers.
+
+    Parameters
+    ----------
+    s_frames : np.ndarray
+        Frame schedule.
+    triggers : np.ndarray
+        Frame indices where triggers occur.
 
     Returns
     -------
     frame_idxs : np.ndarray
-        Frame indices for the looped frames.
+        Frame indices.
     s_frames : np.ndarray
-        Frame schedule for the looped frames.
+        Frame schedule.
+    s_triggers : np.ndarray
+        Frame indices where triggers occur.
     """
-    # Frame indices.
-    idxs = np.tile(np.arange(len(s_frames)), loops)
-    # Frame schedule.
-    s_frames_cpy = s_frames.copy()
     first_frame_dur = s_frames[1] - s_frames[0]
-    for l in range(1, loops):
-        s_frames_cpy = np.concatenate(
-            (
-                s_frames_cpy,
-                s_frames + l * (s_frames[-1] - s_frames[0] + first_frame_dur),
-            )
-        )
-    assert len(idxs) == len(s_frames_cpy)
-    return idxs, s_frames_cpy
+    period = s_frames[-1] - s_frames[0] + first_frame_dur
+    n_frames = len(s_frames)
+
+    # Frame indices.
+    idxs_out = np.tile(np.arange(len(s_frames)), n_loops)
+    # Trigger indices.
+    trigger_repeats = [triggers]
+    for i in range(1, n_loops):
+        trigger_repeats.append(triggers + i * n_frames)
+    triggers_out = np.concatenate(trigger_repeats)
+    triggers_out = triggers_out.astype(int)
+    # Frame schedule.
+    s_frame_repeats = [s_frames]
+    for i in range(1, n_loops):
+        s_frame_repeats.append(s_frames + i * period)
+    s_frames_out = np.concatenate(s_frame_repeats)
+    assert len(idxs_out) == len(s_frames_out)
+    assert len(triggers_out) == len(triggers) * n_loops
+    return idxs_out, s_frames_out, triggers_out
+
+
+def _decompress_triggers(triggers, n_frames):
+    """Decompress trigger indices into a boolean array.
+
+    Parameters
+    ----------
+    triggers : np.ndarray
+        Frame indices where triggers occur.
+    n_frames : int
+        Total number of frames.
+
+    Returns
+    -------
+    np.ndarray
+        Boolean array indicating trigger frames.
+    """
+    trigger_array = np.zeros(n_frames, dtype=bool)
+    trigger_array[triggers] = True
+    return trigger_array
 
 
 def _delay(s_frames, delay):
@@ -67,20 +103,34 @@ def _delay(s_frames, delay):
     return s_frames
 
 
-def _schedule_frames(t0, frames, fps):
-    """Schedule frames starting from time t0.
+def _schedule_single(t0, n_frames, fps):
+    """Schedule frames and triggers starting from time t0.
 
     Returns
     -------
     s_frames : np.ndarray
         Frame schedule.
+    s_triggers : np.ndarray
+        Trigger schedule.
     """
     frame_duration = 1 / fps
-    s_frames = __import__("numpy").linspace(
-        t0, t0 + frames * frame_duration, frames + 1
-    )
+    s_frames = np.linspace(t0, t0 + n_frames * frame_duration, n_frames + 1)
     start_times = s_frames[:-1]
     return start_times
+
+
+def _schedule(
+    t0, n_frames, fps, triggers: Optional[np.ndarray], loops: Optional[int] = None
+):
+    """Schedule frames and triggers starting from time t0, with looping."""
+    if triggers is None:
+        triggers = np.arange(n_frames, dtype=int)
+    s_frames = _schedule_single(t0, n_frames, fps)
+    if loops is None:
+        loops = 1
+    frame_idxs, s_frames, triggers = _loop(s_frames, triggers, loops)
+    assert len(frame_idxs) == len(s_frames)
+    return frame_idxs, s_frames, triggers
 
 
 def _wait_until(target_time):
@@ -98,7 +148,7 @@ def _wait_until(target_time):
 
 
 # Callback is given the frame index.
-BufferSwapCallback = Callable[[int], None]
+OnTriggerCallback = Callable[[], None]
 
 
 class Presenter:
@@ -189,36 +239,26 @@ class Presenter:
 
         # Callbacks. Currently only allows for one callback per event.
         # Purpose: to allow for arduino color changing.
-        self.on_swap_buffers_before = None
-        self.on_swap_buffers_after = None
-        self.on_stop = None
+        self._on_trigger = None
+        self._on_stop = None
 
-    def register_on_swap_buffers_before(self, callback: BufferSwapCallback):
-        """Register a callback for the before swap buffers event."""
-        self.on_swap_buffers_before = callback
-
-    def register_on_swap_buffers_after(self, callback: BufferSwapCallback):
+    def register_on_trigger(self, callback: OnTriggerCallback):
         """Register a callback for the after swap buffers event."""
-        self.on_swap_buffers_after = callback
+        self._on_trigger = callback
 
     def register_on_stop(self, callback: Callable[[], None]):
         """Register a callback for the stop event."""
-        self.on_stop = callback
-
-    def notify_swap_buffers_before(self, frame_idx: int):
-        """Notify the before swap buffers event."""
-        if self.on_swap_buffers_before is not None:
-            self.on_swap_buffers_before(frame_idx)
-
-    def notify_swap_buffers_after(self, frame_idx: int):
-        """Notify the after swap buffers event."""
-        if self.on_swap_buffers_after is not None:
-            self.on_swap_buffers_after(frame_idx)
+        self._on_stop = callback
 
     def notify_stop(self):
         """Notify the stop event."""
-        if self.on_stop is not None:
-            self.on_stop()
+        if self._on_stop is not None:
+            self._on_stop()
+
+    def notify_trigger(self):
+        """Notify the trigger event."""
+        if self._on_trigger is not None:
+            self._on_trigger()
 
     def run_empty(self):
         """
@@ -251,13 +291,9 @@ class Presenter:
                 self.notify_stop()
                 self.status_queue.put("done")
                 stop = True
-                current_time = time.perf_counter()
-                # Why wait 1 second here?
-                while time.perf_counter() - current_time < 1:
-                    pass
             case "destroy":
                 stop = True
-                self.window.close()  # Close the window
+                self.window.close()
         return stop
 
     def to_textures(self, stim: fpspy.Stim):
@@ -386,16 +422,18 @@ class Presenter:
         vao = self.window.ctx.simple_vertex_array(program, vbo, "in_pos")
         return vbo, vao
 
-    def presentation_loop(self, texture_idxs, s_frames, textures, vao):
+    def presentation_loop(self, texture_idxs, s_frames, triggers, textures, vao):
         """
         Main loop for presenting the stimulus.
 
         Parameters
         ----------
-        texture_idxs : list
+        texture_idxs : np.ndarray
             Indices indicating the order in which to present the textures.
-        s_frames : list
+        s_frames : np.ndarray
             Timestamps for when each frame should start.
+        triggers : np.ndarray
+            Indices of frames where triggers should occur.
         textures : list
             Textures for each stimulus frame.
         vao : moderngl.VertexArray
@@ -403,8 +441,14 @@ class Presenter:
         """
         # Ensure the correct context is being used.
         self.window.use()
-        end_times = np.zeros(len(s_frames))
-        for i, texture_idx in enumerate(texture_idxs):
+        if not (texture_idxs.shape == triggers.shape == s_frames.shape):
+            raise ValueError(
+                "Shapes of triggers, texture_idxs and s_frames must be the same."
+                f"Got {triggers.shape=}, {texture_idxs.shape=}, {s_frames.shape=}."
+            )
+        N = len(texture_idxs)
+        end_times = np.zeros(N, dtype=np.float32)
+        for i in range(N):
             is_exit = self.communicate()
             if is_exit:
                 return end_times
@@ -413,15 +457,15 @@ class Presenter:
 
             # Clear the window and render the stimulus.
             self.window.ctx.clear(0, 0, 0)
-            textures[texture_idx].use(location=self.TEXTURE_UNIT)
+            textures[texture_idxs[i]].use(location=self.TEXTURE_UNIT)
             vao.render(moderngl.TRIANGLES)
 
             # Swap buffers, wrapped by callbacks and time record.
-            self.notify_swap_buffers_before(i)
             start_time = time.perf_counter()
             self.window.swap_buffers()
             end_times[i] = time.perf_counter() - start_time
-            self.notify_swap_buffers_after(i)
+            if triggers[i]:
+                self.notify_trigger()
         return end_times
 
     def cleanup_and_finalize(
@@ -500,10 +544,11 @@ class Presenter:
         """
         # Load the stim data
         stim = fpspy.Stim.read_hdf5(stim_path)
-        s_frames = _schedule_frames(t0, len(stim), stim.fps)
-        if len(stim) != len(s_frames):
-            raise ValueError(f"{len(stim)=} ≠ {len(s_frames)=}.")
-        frame_idxs, s_frames = _loop(s_frames, loops)
+        frame_idxs, s_frames, triggers = _schedule(
+            t0, len(stim), stim.fps, stim.triggers, loops
+        )
+        triggers_arr = _decompress_triggers(triggers, len(frame_idxs))
+        assert len(frame_idxs) == len(s_frames), f"{len(frame_idxs)=}≠{len(s_frames)=}."
         supports_channel_selection = stim.n_channels > 1
         if supports_channel_selection:
             stim = stim.with_channels(self.c_channels)
@@ -525,7 +570,9 @@ class Presenter:
         self.logger.info(f"Current time is {datetime.datetime.now()}")
 
         # Start the presentation loop
-        end_times = self.presentation_loop(frame_idxs, s_frames, textures, vao)
+        end_times = self.presentation_loop(
+            frame_idxs, s_frames, triggers_arr, textures, vao
+        )
         # Clean up and finalize the presentation
         self.cleanup_and_finalize(
             textures, vbo, vao, stim_path, loops, end_times, stim.fps
@@ -582,14 +629,31 @@ def write_log(
         )
 
 
-def pyglet_app(
-    process_idx,
-    config,
-    queue,
-    status_queue,
-    delay=10,
-    log_level="INFO",
+def pyglet_app_with_arduino(
+    process_idx, config, queue, status_queue, delay=10, log_level="INFO"
 ):
+    """Start the pyglet app which sends Arduino triggers."""
+    # Configure logging for this child process
+    # Each process needs its own logging configuration
+    fpspy._logging.setup_logging(log_level)
+    arduino = fpspy.arduino.Arduino(
+        port=fpspy.config.get_arduino_port(config),
+        baud_rate=fpspy.config.get_arduino_baud_rate(config),
+        trigger_command=fpspy.config.get_arduino_trigger_command(config),
+    )
+    presenter = Presenter(
+        process_idx,
+        config,
+        queue,
+        status_queue,
+        delay=delay,
+    )
+    # Send arduino triggers on buffer swap
+    presenter.register_on_trigger(arduino.send_trigger)
+    presenter.run_empty()
+
+
+def pyglet_app(process_idx, config, queue, status_queue, delay=10, log_level="INFO"):
     """
     Start the pyglet app.
 
