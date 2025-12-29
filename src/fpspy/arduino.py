@@ -125,9 +125,12 @@ class DummyArduino:
         # mimic the same interface, but only log
         txt = f"\n{message}\n".encode("utf-8")
 
+    def send_trigger(self):
+        """Send a trigger signal to the Arduino."""
+        self.send("T")
+
     def read(self):
         # return None or some test data
-
         return None
 
     def disconnect(self):
