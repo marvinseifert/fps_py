@@ -120,7 +120,11 @@ def _schedule_single(t0, n_frames, fps):
 
 
 def _schedule(
-    t0, n_frames, fps, triggers: Optional[np.ndarray], loops: Optional[int] = None
+    t0,
+    n_frames,
+    fps,
+    triggers: Optional[np.ndarray],
+    loops: Optional[int] = None,
 ):
     """Schedule frames and triggers starting from time t0, with looping."""
     if triggers is None:
