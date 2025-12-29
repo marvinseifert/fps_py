@@ -62,7 +62,8 @@ def run_gui(
     presentation_delay = 10
 
     # Start the GUI and the stimulus presentation in separate processes.
-    queue1 = Queue()  # Queue for communication between all processes.
+    # Create separate command queue for each window process to avoid race conditions
+    cmd_queues = [Queue() for _ in range(n_windows)]
     sync_queue = (
         Queue()
     )  # Queue for synchronization between the presentation processes.
@@ -73,7 +74,7 @@ def run_gui(
         target=fpspy.gui.tkinter_app,
         args=(
             config,
-            queue1,
+            cmd_queues,
             arduino_queue,
             status_queue,
             n_windows,
@@ -85,7 +86,7 @@ def run_gui(
         args=(
             1,
             config,
-            queue1,
+            cmd_queues[0],  # First window gets first queue
             sync_queue,
             arduino_queue,
             status_queue,
@@ -104,7 +105,7 @@ def run_gui(
             args=(
                 idx,
                 config,
-                queue1,
+                cmd_queues[idx - 1],  # Each window gets its own queue
                 sync_queue,
                 arduino_queue,
                 status_queue,
@@ -204,15 +205,16 @@ def run_cli(
     presentation_delay = 10
 
     # Create queues for inter-process communication
-    queue1 = Queue()
+    # Create separate command queue for each window process to avoid race conditions
+    cmd_queues = [Queue() for _ in range(n_windows)]
     sync_queue = Queue()
     arduino_queue = Queue()
     status_queue = Queue()
 
-    # Put play command in queue for all windows
-    for _ in range(n_windows):
+    # Put play command in each window's queue
+    for queue in cmd_queues:
         fpspy.queue.put(
-            queue1,
+            queue,
             "play",
             stim_path=stim_path,
             loops=loops,
@@ -230,7 +232,7 @@ def run_cli(
         args=(
             1,
             config,
-            queue1,
+            cmd_queues[0],  # First window gets first queue
             sync_queue,
             arduino_queue,
             status_queue,
@@ -247,7 +249,7 @@ def run_cli(
             args=(
                 idx,
                 config,
-                queue1,
+                cmd_queues[idx - 1],  # Each window gets its own queue
                 sync_queue,
                 arduino_queue,
                 status_queue,

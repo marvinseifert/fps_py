@@ -30,7 +30,7 @@ class FpspyGui:
         self,
         root: tk.Tk,
         config: dict,
-        queue1: Queue,
+        cmd_queues: list[Queue],
         ard_queue: Queue,
         status_queue: Queue,
         nr_processes: int = 1,
@@ -40,12 +40,12 @@ class FpspyGui:
         ----------
         root : tkinter.Tk
             Root window of the GUI.
-        queue : multiprocessing.Queue
-            Queue for communication with the main process (gui).
+        cmd_queues : list[multiprocessing.Queue]
+            List of command queues, one for each window process.
 
         """
         self.config = config
-        self.queue1 = queue1
+        self.cmd_queues = cmd_queues
         self.ard_queue = ard_queue
         self.status_queue = status_queue
         self.root = root
@@ -350,9 +350,9 @@ class FpspyGui:
         info = fpspy.Stim.preview_hdf5(stim_path)
         s_frames = schedule_frames(info["n_frames"], info["fps"])
 
-        for _ in range(self.nr_processes):
-            # Put the stimulus name in the queue for each window thread to read.
-            fpspy.queue.put(self.queue1, "play",
+        # Send play command to each window's dedicated queue
+        for queue in self.cmd_queues:
+            fpspy.queue.put(queue, "play",
                 stim_path=stim_path,
                 loops=int(self.loop_entry.get()),
                 arduino_colours=self.colours.get(),
@@ -366,9 +366,9 @@ class FpspyGui:
 
     def on_stop_stim(self):
         """Stop the stimulus playback."""
-        for _ in range(self.nr_processes):
-            fpspy.queue.put(self.queue1, "stop")
-            # Put "stop" in the queue for the pyglet thread to read
+        # Send stop command to each window's dedicated queue
+        for queue in self.cmd_queues:
+            fpspy.queue.put(queue, "stop")
         self.arduino_done_callback()
         self.update_status("Stimulus stopped")
 
@@ -456,8 +456,9 @@ class FpspyGui:
         # change text of the button
         self.arduino_light.config(text="Stim running")
 
-        for _ in range(self.nr_processes):
-            fpspy.queue.send(self.queue1, "white_screen")
+        # Send white_screen command to each window's dedicated queue
+        for queue in self.cmd_queues:
+            fpspy.queue.send(queue, "white_screen")
         self.ard_queue.put(self.arduino_cmd_var.get())
         arduino_thread = threading.Thread(target=self.arduino_done_callback)
         self.root.after(100, arduino_thread.start)
@@ -482,14 +483,16 @@ class FpspyGui:
     def stop_arduino(self, *args):
         """Stop the arduino."""
         # self.arduino_spinner.stop()
-        # Drain any pending items in the queue so "stop" is processed next
-        try:
-            while True:
-                self.queue1.get_nowait()
-        except Exception:
-            pass
-        for _ in range(self.nr_processes):
-            fpspy.queue.put(self.queue1, "stop")
+        # Drain any pending items in each queue so "stop" is processed next
+        for queue in self.cmd_queues:
+            try:
+                while True:
+                    queue.get_nowait()
+            except Exception:
+                pass
+        # Send stop command to each window's dedicated queue
+        for queue in self.cmd_queues:
+            fpspy.queue.put(queue, "stop")
         # self.arduino_running = False
         # self.status_queue.get()
         # self.arduino_light.config(bg="red")
@@ -586,29 +589,33 @@ class FpspyGui:
         # Can add cleanup here if needed
         # Disconnect Arduino
         self.ard_queue.put("destroy")
-        for _ in range(self.nr_processes):
-            # Put "stop" in the queue for the pyglet thread to read
-            fpspy.queue.put(self.queue1, "stop")
-            # Put "destroy" in the queue for the pyglet thread.
-            fpspy.queue.put(self.queue1, "destroy")
+        # Send stop and destroy commands to each window's dedicated queue
+        for queue in self.cmd_queues:
+            fpspy.queue.put(queue, "stop")
+            fpspy.queue.put(queue, "destroy")
 
         # Will be read by the pyglet thread to close the window.
         self.root.destroy()
 
 
-def tkinter_app(config, queue1, ard_queue, status_queue, nr_processes):
+def tkinter_app(config, cmd_queues, arduino_queue, status_queue, nr_processes):
     """Create the tkinter GUI and run the mainloop. Used to run the GUI in a separate
     process.
 
     Parameters
     ----------
-    queue : multiprocessing.Queue
-        The queue used to communicate with the pyglet thread.
+    cmd_queues : list[multiprocessing.Queue]
+        List of command queues, one for each window process.
+    arduino_queue : multiprocessing.Queue
+        Queue for Arduino communication.
+    status_queue : multiprocessing.Queue
+        Queue for status updates.
+    nr_processes : int
+        Number of window processes.
     """
-
     root = tk.Tk()  # Create the root window
     app = FpspyGui(
-        root, config, queue1, ard_queue, status_queue, nr_processes
+        root, config, cmd_queues, arduino_queue, status_queue, nr_processes
     )  # Create the NoiseGeneratorApp instance
     root.protocol(
         "WM_DELETE_WINDOW", app.on_close

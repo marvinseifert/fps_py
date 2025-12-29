@@ -59,14 +59,17 @@ def run_gui(
     n_windows = len(config["windows"])
 
     # Start the GUI and the stimulus presentation in separate processes.
-    cmd_queue = mp.Queue()  
+    # Create separate command queue for each window process to avoid race conditions
+    cmd_queues = [mp.Queue() for _ in range(n_windows)]
+    arduino_queue = mp.Queue()  # Dummy queue for 3brain (not used)
     status_queue = mp.Queue()
     # Gui process
     p1 = mp.Process(
         target=fpspy.gui.tkinter_app,
         args=(
             config,
-            cmd_queue,
+            cmd_queues,
+            arduino_queue,
             status_queue,
             n_windows,
         ),
@@ -77,12 +80,12 @@ def run_gui(
         args=(
             1,
             config,
-            cmd_queue,
+            cmd_queues[0],  # First window gets first queue
             status_queue,
             delay,
             log_level,
         ),
-    )  
+    )
     # Start the processes
     p1.start()
     p2.start()
@@ -95,7 +98,7 @@ def run_gui(
             args=(
                 idx,
                 config,
-                cmd_queue,
+                cmd_queues[idx - 1],  # Each window gets its own queue
                 status_queue,
                 delay,
                 log_level,
@@ -161,15 +164,16 @@ def run_cli(
         raise typer.Exit(1)
 
     # Create queues for inter-process communication
-    cmd_queue = mp.Queue()
+    # Create separate command queue for each window process to avoid race conditions
+    cmd_queues = [mp.Queue() for _ in range(n_windows)]
     status_queue = mp.Queue()
 
     # Create a reference time point
     t0 = time.perf_counter()
-    # Put play command in queue for all windows
-    for _ in range(n_windows):
+    # Put play command in each window's queue
+    for queue in cmd_queues:
         fpspy.queue.put(
-            cmd_queue,
+            queue,
             "play",
             stim_path=stim_path,
             loops=loops,
@@ -185,7 +189,7 @@ def run_cli(
         args=(
             1,
             config,
-            cmd_queue,
+            cmd_queues[0],  # First window gets first queue
             status_queue,
             delay,
             log_level,
@@ -201,7 +205,7 @@ def run_cli(
             args=(
                 idx,
                 config,
-                cmd_queue,
+                cmd_queues[idx - 1],  # Each window gets its own queue
                 status_queue,
                 delay,
                 log_level,
