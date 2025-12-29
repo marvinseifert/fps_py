@@ -140,11 +140,36 @@ def _wait_until(target_time):
     remaining = target_time - now
     if remaining <= 0:
         _logger.warning(f"{target_time=} already passed, {now=}.")
-        return
+        return remaining
     if remaining > max_busy_wait_ms:
         time.sleep(remaining - max_busy_wait_ms)
     while time.perf_counter() < target_time:
         pass
+    return remaining
+
+
+def _wait_or_skip(target_time, next_frame_time: Optional[float], fps):
+    """Semi-busy-wait for the frame time, or possibly skip to next frame."""
+    max_busy_wait_ms = 0.002
+    now = time.perf_counter()
+    remaining = target_time - now
+    if remaining <= 0:
+        _logger.warning(f"{target_time=} already passed, {now=}.")
+        has_next_frame = next_frame_time is not None
+        if not has_next_frame:
+            return False
+        half_period = 0.5 / fps
+        # If displaying the current frame would cause us to miss the next frame by more
+        # than half a period, then skip to the next frame.
+        if now + half_period >= next_frame_time:
+            _logger.warning("Skipping to next frame.")
+            return True
+        return False
+    if remaining > max_busy_wait_ms:
+        time.sleep(remaining - max_busy_wait_ms)
+    while time.perf_counter() < target_time:
+        pass
+    return False
 
 
 # Callback is given the frame index.
@@ -224,7 +249,9 @@ class Presenter:
         settings.WINDOW["title"] = "Noise Presentation"
         settings.WINDOW["style"] = config["windows"][str(self.process_idx)]["style"]
 
-        self.frame_duration = 1 / config["fps"]  # Calculate the frame duration
+        # Assume constant. Keep both fps and duration for convenience.
+        self.fps = config["fps"]
+        self.frame_duration = 1 / self.fps
 
         self.window = moderngl_window.create_window_from_settings()
         self.window.position = (
@@ -453,7 +480,10 @@ class Presenter:
             if is_exit:
                 return end_times
             # Sync frame presentation to the scheduled time.
-            _wait_until(s_frames[i])
+            next_frame_time = s_frames[i + 1] if i < N - 1 else None
+            skip = _wait_or_skip(s_frames[i], next_frame_time, self.fps)
+            if skip:
+                continue
 
             # Clear the window and render the stimulus.
             self.window.ctx.clear(0, 0, 0)
