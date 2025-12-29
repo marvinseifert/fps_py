@@ -82,7 +82,7 @@ def run_gui(
             delay,
             log_level,
         ),
-    )  # Start the pyglet app
+    )  
     # Start the processes
     p1.start()
     p2.start()
