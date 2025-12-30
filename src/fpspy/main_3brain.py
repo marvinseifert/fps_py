@@ -29,7 +29,7 @@ cli_app = typer.Typer(help="fpspy CLI. Preset visual stimuli with OpenGL.")
 
 
 @gui_app.command()
-def run_gui(
+def gui(
     config_path: Path | None = typer.Argument(
         None,
         help="Path to the TOML configuration file. If omitted, try loading user"
@@ -113,7 +113,7 @@ def run_gui(
 
 
 @cli_app.command()
-def run_cli(
+def cli(
     stim_path: Path = typer.Argument(
         ...,
         help="Path to stimulus file (.h5)",
@@ -222,12 +222,12 @@ def run_cli(
     typer.echo("Stimulus playback completed.")
 
 
-def gui():
-    gui_app()
+def run_gui():
+    gui()
 
-def cli():
-    cli_app()
+def run_cli():
+    cli()
 
 
 if __name__ == "__main__":
-    gui()
+    run_gui()

@@ -37,10 +37,10 @@ dev = [
 ]
 
 [project.scripts]
-fpspy = "fpspy.main:cli"
-fpspy-gui = "fpspy.main:gui"
-fpspy-3brain = "fpspy.main_3brain:cli"
-fpspy-info = "fpspy.main:info"
+fpspy = "fpspy.main:run_cli"
+fpspy-gui = "fpspy.main:run_gui"
+fpspy-3brain = "fpspy.main_3brain:run_cli"
+fpspy-info = "fpspy.main:run_info"
 
 [project.gui-scripts]
 fpspy-gui = "fpspy.main:gui_main"

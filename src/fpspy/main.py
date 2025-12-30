@@ -31,7 +31,7 @@ info_app = typer.Typer(help="fpspy info. Show information about stimuli.")
 
 
 @gui_app.command()
-def run_gui(
+def gui(
     config_path: Path | None = typer.Argument(
         None,
         help="Path to the TOML configuration file. If omitted, try loading user"
@@ -126,7 +126,7 @@ def run_gui(
 
 
 @cli_app.command()
-def run_cli(
+def cli(
     stim_path: Path = typer.Argument(
         ...,
         help="Path to stimulus file (.h5)",
@@ -292,13 +292,13 @@ def show_info(
 
 
 
-def gui():
+def run_gui():
     gui_app()
 
-def cli():
+def run_cli():
     cli_app()
 
-def info():
+def run_info():
     info_app()
 
 
