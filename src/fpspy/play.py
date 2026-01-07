@@ -14,6 +14,7 @@ import importlib.resources
 import fpspy.arduino
 import fpspy.config
 import fpspy.queue
+import fpspy.stim
 
 # import pydevd_pycharm
 
@@ -577,7 +578,9 @@ class Presenter:
             - s_frames
 
         """
-        s_frames = _loop(s_frames, loops)
+        n_frames = len(s_frames) - 1
+        triggers = np.arange(n_frames, dtype=np.int64)
+        frame_idxs, s_frames, triggers = fpspy.stim.loop(s_frames, triggers, loops)
 
         arduino_colours = self.process_arduino_colours(
             arduino_colours, change_logic, len(s_frames) - 1
@@ -599,12 +602,6 @@ class Presenter:
         # Create the buffer and vertex array object for the stimulus.
         vbo, vao = self.create_buffer_and_vao(quad, program)
 
-        # Establish the time per frame for the desired fps
-
-        time_per_frame, pattern_indices = self.setup_presentation(
-            len(stim), loops, stim.fps
-        )
-
         # Synchronize the presentation
 
         # Add buffer delay to frames:
@@ -624,7 +621,7 @@ class Presenter:
         # Start the presentation loop
         self.switch_trigger_modes("t_s_on")
         end_times = self.presentation_loop(
-            pattern_indices,
+            frame_idxs,
             s_frames,
             end_times,
             stim.n_channels,

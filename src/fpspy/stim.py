@@ -7,12 +7,86 @@ import einops
 __all__ = ["Stim"]
 
 CURRENT_HDF5_FORMAT_VER = "1"
+def loop(s_frames, triggers, n_loops):
+    """Repeat the frames and triggers.
 
-_logger = logging.getLogger(__name__)
+    Parameters
+    ----------
+    s_frames : np.ndarray
+        Start times of each frame and the end time of the last frame, in seconds.
+    triggers : np.ndarray
+        Frame indices where triggers occur.
+
+    Returns
+    -------
+    frame_idxs : np.ndarray
+        Frame indices.
+    s_frames : np.ndarray
+        Frame schedule.
+    s_triggers : np.ndarray
+        Frame indices where triggers occur.
+    """
+    if triggers is None or triggers.size == 0:
+        raise ValueError("Triggers must be provided.")
+    n_frames = len(s_frames) - 1
+    if len(triggers) > n_frames:
+        raise ValueError("More triggers than frames, {len(triggers)=} > {n_frames=}")
+    period = s_frames[-1] - s_frames[0]
+    start_times = s_frames[:-1]
+
+    # Frame indices.
+    idxs_out = np.tile(np.arange(len(start_times)), n_loops)
+    # Trigger indices.
+    trigger_repeats = [triggers]
+    for i in range(1, n_loops):
+        trigger_repeats.append(triggers + i * n_frames)
+    triggers_out = np.concatenate(trigger_repeats)
+    triggers_out = triggers_out.astype(int)
+    # Frame schedule.
+    s_frame_repeats = [start_times]
+    for i in range(1, n_loops):
+        s_frame_repeats.append(start_times + i * period)
+    last_frame = period * n_loops + s_frames[0]
+    s_frames_out = np.concatenate(s_frame_repeats + [np.array([last_frame])])
+    assert len(idxs_out)+1 == len(s_frames_out)
+    assert len(triggers_out) == len(triggers) * n_loops
+    return idxs_out, s_frames_out, triggers_out
 
 
-class Stim:
-    """A class representing a stimulus.
+def decompress_triggers(triggers, n_frames):
+    """Decompress trigger indices into a boolean array.
+
+    Parameters
+    ----------
+    triggers : np.ndarray
+        Frame indices where triggers occur.
+    n_frames : int
+        Total number of frames.
+
+    Returns
+    -------
+    np.ndarray
+        Boolean array indicating trigger frames.
+    """
+    trigger_array = np.zeros(n_frames, dtype=bool)
+    trigger_array[triggers] = True
+    return trigger_array
+
+
+def delay(s_frames, delay):
+    """Add a delay to the frame schedule.
+
+    The delay must be such that the first frame is still in the future.
+
+    Returns
+    -------
+    s_frames : np.ndarray
+        Frame schedule with added delay.
+    """
+    s_frames = s_frames + delay
+    if s_frames[0] <= time.perf_counter():
+        raise Exception("Failed to start stimulus in time. Increased delay needed.")
+    return s_frames
 
     Currently, the main purpose is to encapsulate the serialization and deserialization.
     """

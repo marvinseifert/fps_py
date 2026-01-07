@@ -25,84 +25,15 @@ import fpspy.arduino
 
 _logger = logging.getLogger(__name__)
 
+RenderTarget = Literal["screen", "array"]
 
-def _loop(s_frames, triggers, n_loops):
-    """Repeat the frames and triggers.
 
-    Parameters
-    ----------
-    s_frames : np.ndarray
-        Frame schedule.
-    triggers : np.ndarray
-        Frame indices where triggers occur.
+def probe_default_fbo_srgb() -> tuple[bool, bool]:
+    """Check if the default framebuffer has sRGB enabled.
 
-    Returns
-    -------
-    frame_idxs : np.ndarray
-        Frame indices.
-    s_frames : np.ndarray
-        Frame schedule.
-    s_triggers : np.ndarray
-        Frame indices where triggers occur.
+    ModernGL is opaque about whether the default framebuffer is sRGB-capable, so we
+    check manually.
     """
-    first_frame_dur = s_frames[1] - s_frames[0]
-    period = s_frames[-1] - s_frames[0] + first_frame_dur
-    n_frames = len(s_frames)
-
-    # Frame indices.
-    idxs_out = np.tile(np.arange(len(s_frames)), n_loops)
-    # Trigger indices.
-    trigger_repeats = [triggers]
-    for i in range(1, n_loops):
-        trigger_repeats.append(triggers + i * n_frames)
-    triggers_out = np.concatenate(trigger_repeats)
-    triggers_out = triggers_out.astype(int)
-    # Frame schedule.
-    s_frame_repeats = [s_frames]
-    for i in range(1, n_loops):
-        s_frame_repeats.append(s_frames + i * period)
-    s_frames_out = np.concatenate(s_frame_repeats)
-    assert len(idxs_out) == len(s_frames_out)
-    assert len(triggers_out) == len(triggers) * n_loops
-    return idxs_out, s_frames_out, triggers_out
-
-
-def _decompress_triggers(triggers, n_frames):
-    """Decompress trigger indices into a boolean array.
-
-    Parameters
-    ----------
-    triggers : np.ndarray
-        Frame indices where triggers occur.
-    n_frames : int
-        Total number of frames.
-
-    Returns
-    -------
-    np.ndarray
-        Boolean array indicating trigger frames.
-    """
-    trigger_array = np.zeros(n_frames, dtype=bool)
-    trigger_array[triggers] = True
-    return trigger_array
-
-
-def _delay(s_frames, delay):
-    """Add a delay to the frame schedule.
-
-    The delay must be such that the first frame is still in the future.
-
-    Returns
-    -------
-    s_frames : np.ndarray
-        Frame schedule with added delay.
-    """
-    s_frames = s_frames + delay
-    if s_frames[0] <= time.perf_counter():
-        raise Exception("Failed to start stimulus in time. Increased delay needed.")
-    return s_frames
-
-
 def _schedule_single(t0, n_frames, fps):
     """Schedule frames and triggers starting from time t0.
 
