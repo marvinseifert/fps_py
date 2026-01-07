@@ -347,8 +347,10 @@ class FpspyGui:
         index = self.file_listbox.curselection()
         stim_name = self.file_listbox.get(index[0])
         stim_path = fpspy.config.user_data_dir(self.config) / stim_name
-        info = fpspy.Stim.preview_hdf5(stim_path)
-        s_frames = schedule_frames(info["n_frames"], info["fps"])
+        frame_times = fpspy.StimArray.frame_times_from_hdf5(stim_path)
+        start_times = frame_times[: -1]
+        ref_time = time.perf_counter()
+        s_frames = ref_time + start_times
 
         # Send play command to each window's dedicated queue
         for queue in self.cmd_queues:
@@ -399,10 +401,9 @@ class FpspyGui:
                 file_name = self.file_listbox.get(index[0])
 
                 # Get some info about the selected file and display it:
-                info = fpspy.Stim.preview_hdf5(
+                info = fpspy.StimArray.preview_hdf5(
                     fpspy.config.user_data_dir(self.config) / file_name)
-                duration = info["n_frames"] / info["fps"] / 60
-                info_str = f"fps: {info['fps']}, time: {duration:.2f} min"
+                info_str = f"fps: {info['fps']:.2f}, duration: {info['duration']/60:.1f} min"
                 if "checkerboard_size" in info:
                     info_str += f", size: {info['checkerboard_size']}, shuffle: {info['Shuffle']}"
                 self.selected_file_info_var.set(info_str)
@@ -629,12 +630,3 @@ def tkinter_app(config, cmd_queues, arduino_queue, status_queue, nr_processes):
 # if __name__ == "__main__":
 #     tkinter_app(Queue())
 
-
-
-def schedule_frames(frames, fps):
-    frame_duration = 1 / fps
-    current_time = time.perf_counter()
-    s_frames = np.linspace(
-        current_time, current_time + frames * frame_duration, frames + 1
-    )
-    return s_frames

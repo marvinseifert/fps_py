@@ -181,7 +181,7 @@ def cli(
 
     # Load stimulus info
     try:
-        info = fpspy.stim.Stim.preview_hdf5(stim_path)
+        info = fpspy.stim.StimArray.preview_hdf5(stim_path)
     except Exception as e:
         typer.echo(f"Error loading stimulus file: {e}", err=True)
         raise typer.Exit(1)
@@ -281,7 +281,7 @@ def show_info(
 
     # Load stimulus info
     try:
-        info = fpspy.stim.Stim.preview_hdf5(stim_path)
+        info = fpspy.stim.StimArray.preview_hdf5(stim_path)
     except Exception as e:
         typer.echo(f"Error loading stimulus file: {e}", err=True)
         raise typer.Exit(1)

@@ -1,0 +1,14 @@
+{
+    "shader_file": "gaussian_checkerboard.frag",
+    "n_frames": 1200,
+    "fps": 20,
+    "width": 768,
+    "height": 768,
+    "uniforms": {
+        "checker_size": 16,
+        "mean_u8": 128,
+        "std_u8": 42,
+        "base_seed": 12345
+    },
+    "label": "Gaussian checkerboard 768x768, 16px checkers, 20Hz, 1min"
+}

@@ -253,7 +253,7 @@ class Presenter:
         colours = colours * int(colour_repeats)
         return colours
 
-    def to_textures(self, stim: fpspy.Stim):
+    def to_textures(self, stim: fpspy.StimArray):
         """
         Create textures from the stimulus frames.
 
@@ -557,7 +557,7 @@ class Presenter:
         )
 
         # Load the stim data
-        stim = fpspy.Stim.read_hdf5(stim_path)
+        stim = fpspy.StimArray.read_hdf5(stim_path)
         supports_channel_selection = stim.n_channels > 1
         if supports_channel_selection:
             stim = stim.with_channels(self.c_channels)

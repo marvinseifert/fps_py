@@ -3,6 +3,7 @@
 # --- Global settings ---
 gl_version = [4, 1]
 fps = 75
+presentation_delay = 4
 
 # --- Arduino settings ---
 [arduino]
@@ -25,6 +26,8 @@ window_size = [500, 500]
 fullscreen = false
 style = "transparent"
 channels = [0, 1, 2]
+# RGB values will be interpreted as sRGB by the monitor. 
+clear_rgba = [0.73, 0.73, 0.73, 1.0]
 
 [windows."2"]
 y_shift = 1000
@@ -33,3 +36,5 @@ window_size = [500, 500]
 fullscreen = false
 style = "transparent"
 channels = [0, 1, 2]
+# RGB values will be interpreted as sRGB by the monitor. 
+clear_rgba = [0.73, 0.73, 0.73, 1.0]

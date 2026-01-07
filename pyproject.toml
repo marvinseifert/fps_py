@@ -28,6 +28,7 @@ dependencies = [
     "tomli-w (>=1.2.0,<2.0.0)",
     "einops (>=0.8.1,<0.9.0)",
     "rich (>=14.2.0,<15.0.0)",
+    "pyopengl (>=3.1.10,<4.0.0)",
 ]
 
 
@@ -47,7 +48,7 @@ fpspy-3brain = "fpspy.main_3brain:run_cli"
 fpspy-info = "fpspy.main:run_info"
 
 [project.gui-scripts]
-fpspy-gui = "fpspy.main:gui_main"
+fpspy-gui = "fpspy.main:run_gui"
 
 
 # [tool.poetry]
@@ -58,3 +59,4 @@ fpspy-gui = "fpspy.main:gui_main"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+

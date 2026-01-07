@@ -9,10 +9,10 @@ Differences to play.py:
 
 import csv
 import datetime
-import importlib.resources
 import logging
+from pathlib import Path
 import time
-from typing import Callable, Optional
+from typing import Callable, Optional, Literal
 import moderngl
 import moderngl_window
 from moderngl_window.conf import settings
@@ -21,8 +21,13 @@ import fpspy.config
 import fpspy.queue
 import fpspy._logging
 import fpspy.arduino
+import OpenGL.GL as gl
+import logging
+import fpspy.stim as stim
+import fpspy.color
 
-
+# We are okay with any interleaving caused by multiple processes. The logs are not
+# critical, and each process has its own log files anyway.
 _logger = logging.getLogger(__name__)
 
 RenderTarget = Literal["screen", "array"]
@@ -34,53 +39,18 @@ def probe_default_fbo_srgb() -> tuple[bool, bool]:
     ModernGL is opaque about whether the default framebuffer is sRGB-capable, so we
     check manually.
     """
-def _schedule_single(t0, n_frames, fps):
-    """Schedule frames and triggers starting from time t0.
+    # Are we converting linear->sRGB on framebuffer writes?
+    srgb_enabled = bool(gl.glIsEnabled(gl.GL_FRAMEBUFFER_SRGB))
 
-    Returns
-    -------
-    s_frames : np.ndarray
-        Frame schedule.
-    s_triggers : np.ndarray
-        Trigger schedule.
-    """
-    frame_duration = 1 / fps
-    s_frames = np.linspace(t0, t0 + n_frames * frame_duration, n_frames + 1)
-    start_times = s_frames[:-1]
-    return start_times
-
-
-def _schedule(
-    t0,
-    n_frames,
-    fps,
-    triggers: Optional[np.ndarray],
-    loops: Optional[int] = None,
-):
-    """Schedule frames and triggers starting from time t0, with looping."""
-    if triggers is None:
-        triggers = np.arange(n_frames, dtype=int)
-    s_frames = _schedule_single(t0, n_frames, fps)
-    if loops is None:
-        loops = 1
-    frame_idxs, s_frames, triggers = _loop(s_frames, triggers, loops)
-    assert len(frame_idxs) == len(s_frames)
-    return frame_idxs, s_frames, triggers
-
-
-def _wait_until(target_time):
-    """Semi-busy-wait until the target time is reached."""
-    max_busy_wait_ms = 0.002
-    now = time.perf_counter()
-    remaining = target_time - now
-    if remaining <= 0:
-        _logger.warning(f"{target_time=} already passed, {now=}.")
-        return remaining
-    if remaining > max_busy_wait_ms:
-        time.sleep(remaining - max_busy_wait_ms)
-    while time.perf_counter() < target_time:
-        pass
-    return remaining
+    # Is the default framebuffer attachment sRGB-encoded or linear?
+    enc = gl.glGetFramebufferAttachmentParameteriv(
+        gl.GL_FRAMEBUFFER,
+        gl.GL_BACK_LEFT,  # default framebuffer color buffer
+        gl.GL_FRAMEBUFFER_ATTACHMENT_COLOR_ENCODING,
+    )
+    # enc is an int enum: GL_SRGB or GL_LINEAR
+    srgb_capable = int(enc) == int(gl.GL_SRGB)
+    return srgb_capable, srgb_enabled
 
 
 def _wait_or_skip(target_time, next_frame_time: Optional[float], fps):
@@ -123,11 +93,14 @@ class Presenter:
     and communicate with the GUI process via a multiprocessing.Queue.
     """
 
+    dropped_frames_filename_fmt = "dropped_frames_win{window_idx}.csv"
+
     def __init__(
         self,
         process_idx,
         config,
-        queue,
+        out_dir,
+        cmd_queue,
         status_queue,
         delay=10,
     ):
@@ -135,74 +108,120 @@ class Presenter:
         Parameters
         ----------
         config : dict
-            Dictionary containing the configuration parameters for the window.
-            Keys:
-                "y_shift" : int
-                    Shift of the window in y direction.
-                "x_shift" : int
-                    Shift of the window in x direction.
-                "gl_version" : tuple
-                    Version of OpenGL to use.
-                "window_size" : tuple
-                    Size of the window.
-                "fullscreen" : bool
-                    Whether to use fullscreen mode or not. Fullscreen is currently only
-                    working on the main monitor.
+            See notes below.
+        out_dir : str or Path
+            Output directory for data such as dropped frames.
+        cmd_queue : multiprocessing.Queue
+            Queue for receiving commands from the main process.
+        status_queue : multiprocessing.Queue
+            Queue for sending status updates to the main process.
+        delay : float
+            Delay added before starting the stimulus presentation, in seconds.
 
-        queue : multiprocessing.Queue
-            Queue for communication with the main process (gui).
+        config
+        ------
+        Dictionary containing the configuration parameters for the window.
+
+        An example showing the expected structure:
+        {
+            "gl_version": [4, 1],
+            "fps" 75.0,
+            "windows": {
+                "1": {
+                    "x_shift": 0,
+                    "y_shift": 0,
+                    "window_size": [800, 600],
+                    "fullscreen": False,
+                    "style": "transparent",
+                    "channels": [1, 2, 3],
+                },
+                "2": { ... },
+        }
+
+        Keys:
+            "gl_version" : tuple
+                Version of OpenGL to use.
+                Size of the window.
+            "fps" : float
+                Frames per second for the stimulus presentation.
+            "windows" : dict
+                Dictionary containing the window-specific parameters. Each key is
+                the process index (as string) and the value is another dictionary.
+        Each window dictionary:
+            "y_shift" : int
+                Shift of the window in y direction.
+            "x_shift" : int
+                Shift of the window in x direction.
+            "window_size" : tuple
+                Size of the window as (width, height).
+            "fullscreen" : bool
+                Whether to use fullscreen mode or not. Fullscreen is currently only
+                working on the main monitor.
+            "style" : str
+                Style of the window.
+            "channels" : list of int
+                List of channels to present on this window.
+            "clear_rgba" : list of float
+                Clear color for the window as [r, g, b, a].
 
         """
         self.process_idx = process_idx
         self.config = config
-        self.queue = queue
+        self.queue = cmd_queue
         self.status_queue = status_queue
+        self.out_dir = Path(out_dir)
         self.c_channels = config["windows"][str(self.process_idx)]["channels"]
         self.delay = delay
 
-        # Create a logger adapter that automatically includes window_idx
-        self.logger = logging.LoggerAdapter(
-            logging.getLogger(__name__), {"window_idx": self.process_idx}
-        )
-        settings.WINDOW["class"] = (
-            "moderngl_window.context.pyglet.Window"  # using a pyglet window
-        )
-        settings.WINDOW["gl_version"] = config["gl_version"]
-        settings.WINDOW["size"] = config["windows"][str(self.process_idx)][
-            "window_size"
-        ]
-        settings.WINDOW["aspect_ratio"] = (
-            None  # Sets the aspect ratio to the window's aspect ratio
-        )
-        settings.WINDOW["fullscreen"] = config["windows"][str(self.process_idx)][
-            "fullscreen"
-        ]
-        settings.WINDOW["samples"] = 0
-        settings.WINDOW["double_buffer"] = True
-        settings.WINDOW["vsync"] = True
-        settings.WINDOW["resizable"] = False
-        settings.WINDOW["title"] = "Noise Presentation"
-        settings.WINDOW["style"] = config["windows"][str(self.process_idx)]["style"]
-
-        # Assume constant. Keep both fps and duration for convenience.
-        self.fps = config["fps"]
-        self.frame_duration = 1 / self.fps
-
-        self.window = moderngl_window.create_window_from_settings()
-        self.window.position = (
-            config["windows"][str(self.process_idx)]["x_shift"],
-            config["windows"][str(self.process_idx)]["y_shift"],
-        )  # Shift the window
-        self.window.init_mgl_context()  # Initialize the moderngl context
-        self.window.set_default_viewport()  # Set the viewport to the window size
-
-        # We only use 1 texture unit, so we can hardcode its unit number.
-        self.TEXTURE_UNIT = 0
+        self.setup_logging()
+        self.setup_window(config)
 
         # Callbacks. Currently only allows for one callback per event.
         # Purpose: to allow for arduino color changing.
         self._on_trigger = None
         self._on_stop = None
+
+    def setup_window(self, config):
+        settings.WINDOW["class"] = "moderngl_window.context.pyglet.Window"
+        settings.WINDOW["gl_version"] = config["gl_version"]
+        window_config = config["windows"][str(self.process_idx)]
+        settings.WINDOW["size"] = window_config["window_size"]
+        settings.WINDOW["fullscreen"] = window_config["fullscreen"]
+        settings.WINDOW["style"] = window_config["style"]
+        settings.WINDOW["aspect_ratio"] = None
+        settings.WINDOW["samples"] = 0
+        settings.WINDOW["double_buffer"] = True
+        settings.WINDOW["vsync"] = True
+        settings.WINDOW["resizable"] = False
+        settings.WINDOW["title"] = "Noise Presentation"
+
+        # Assume constant. Keep both fps and duration for convenience.
+        self.fps = config["fps"]
+        self.frame_duration = 1 / self.fps
+        self.clear_rgba = window_config["clear_rgba"]
+        if self.clear_rgba == [0.5, 0.5, 0.5, 1.0]:
+            self.logger.warning(
+                "Received {self.clear_rgba} as clear color. RGB values "
+                "are interpreted as sRGB, so 0.5  will map to ~0.22 in "
+                "intensity when displayed. 50% grey in sRGB is ~0.73."
+            )
+        self.window = moderngl_window.create_window_from_settings()
+        self.window.position = (window_config["x_shift"], window_config["y_shift"])
+        self.window.init_mgl_context()
+        self.window.set_default_viewport()
+
+    def setup_logging(self):
+        self.logger = logging.LoggerAdapter(
+            logging.getLogger(__name__), {"window_idx": self.process_idx}
+        )
+        fpspy._logging.enable_file_logging(
+            self.out_dir / f"presenter_{self.process_idx}.log"
+        )
+
+    def close_window(self):
+        """Close the window."""
+        if self.window is not None:
+            self.window.close()
 
     def register_on_trigger(self, callback: OnTriggerCallback):
         """Register a callback for the after swap buffers event."""
@@ -223,19 +242,14 @@ class Presenter:
             self._on_trigger()
 
     def run_empty(self):
-        """
-        Empty loop. Establishes a window filled with a grey background. Waits for
-        commands from the main process (gui).
-        """
+        """Do nothing, waiting for commands from the main process."""
         self.window.use()
         while not self.window.is_closing:
-            # Clear the window with a grey background
-            # self.window.ctx.clear(0.5, 0.5, 0.5, 1.0)
-            self.window.ctx.clear(0, 0, 0, 1.0)
-            self.window.swap_buffers()  # Swap the buffers (update the window content)
+            self.window.ctx.clear(*self.clear_rgba)
+            self.window.swap_buffers()
             self.communicate()  # Check for commands from the main process (gui)
             time.sleep(0.001)  # Sleep for 1 ms to avoid busy waiting
-        self.window.close()  # Close the window in case it is closed by the user
+        self.close_window()
 
     def communicate(self):
         """Check and execute commands from the main process (gui)."""
@@ -246,302 +260,102 @@ class Presenter:
         stop = False
         match command.type:
             case "play":
-                self.play(*command.args, **command.kwargs)
+                do_destroy = self.play(*command.args, **command.kwargs)
+                if do_destroy:
+                    stop = True
+                    self.close_window()
             case "white_screen":
                 pass
             case "stop":
+                stop = True
                 self.notify_stop()
                 self.status_queue.put("done")
-                stop = True
             case "destroy":
                 stop = True
-                self.window.close()
+                self.close_window()
         return stop
 
-    def to_textures(self, stim: fpspy.Stim):
-        """
-        Create textures from the stimulus frames.
+    def play(self, stim_path, stim_config, loops, t0, speed=None, close_after=False):
+        """Play one of the supported shader-based stimuli.
 
-        Returns
-        -------
-        A list of moderngl.Texture objects.
-        """
-        textures = [
-            self.window.ctx.texture(
-                (stim.width, stim.height),
-                stim.n_channels,
-                stim.frames[i].tobytes(),
-                samples=0,
-                alignment=1,
-            )
-            for i in range(len(stim.frames))
-        ]
-        return textures
-
-    def setup_shader_program(self):
-        """
-        Initializes the shader program using vertex and fragment shaders.
-
-        Returns
-        -------
-        moderngl.Program
-            The compiled and linked shader program.
-        """
-        # Load shaders.
-        resource_dir = importlib.resources.files("fpspy.resources")
-        with (resource_dir / "vertex_shader.glsl").open("r") as vertex_file:
-            vertex_shader_source = vertex_file.read()
-        with (resource_dir / "fragment_shader_colour.glsl").open("r") as fragment_file:
-            fragment_shader_source = fragment_file.read()
-        # Compile and link the shader program.
-        program = self.window.ctx.program(
-            vertex_shader=vertex_shader_source,
-            fragment_shader=fragment_shader_source,
-        )
-        # We always use 1 texture, bound to texture unit 0.
-        program["tex"].value = self.TEXTURE_UNIT
-        return program
-
-    @staticmethod
-    def create_quad(stim_width, stim_height, win_width, win_height):
-        """Create a quad that has corners at each stimulus corner.
-
-        If the stimulus is 1x1 pixel, the quad covers the whole screen (broadcasting).
+        Loads the shader and metadata from files, then renders the stimulus
+        procedurally on the GPU without loading frames into memory.
 
         Parameters
         ----------
-        stim_width : int
-            The width of the stimulus texture in pixels.
-        stim_height : int
-            The height of the stimulus texture in pixels.
-        width : int
-            The width of the window in pixels.
-        height : int
-            The height of the window in pixels.
-
-        Returns
-        -------
-        tuple
-            A tuple of scaling factors (scale_x, scale_y) and the quad vertices array.
+        path : str or Path
+            Path to the shader program file.
+        loops : int
+            Number of times to loop the stimulus.
+        t0 : float
+            Reference time (from time.perf_counter()).
+        speed : float, optional
+            Override the playback speed.
         """
-        # Calculate the aspect ratio of the window and the texture
-        window_aspect = win_width / win_height
-        texture_aspect = stim_width / stim_height
-        # If the stimulus has shape (f, h, w, c) == (f, 1, 1, c), we broadcast by
-        # having the single pixel cover the whole screen.
-        do_broadcast = stim_height == 1 and stim_width == 1
-        if do_broadcast:
-            scale_x = scale_y = 1
-        else:
-            # Determine scaling factors based on aspect ratios
-            scale_x = stim_width / win_width
-            scale_y = stim_height / win_height
-            # TODO: what is this for?
-            if (window_aspect == texture_aspect) & (window_aspect > 1):
-                scale_x = scale_y = 1
+        speed = speed if speed is not None else 1.0
 
-        # Establish the vertices for the texture in the shader program
-        quad = np.array(
-            [
-                -scale_x,
-                scale_y,  # top left
-                -scale_x,
-                -scale_y,  # bottom left
-                scale_x,
-                scale_y,  # top right
-                scale_x,
-                scale_y,  # top right
-                -scale_x,
-                -scale_y,  # bottom left
-                scale_x,
-                -scale_y,  # bottom right
-            ],
-            dtype=np.float32,
+        # The GUI can customize the stimulus through the config.
+        prog = stim.create_program(stim_path, stim_config)
+        s_frames, triggers = prog.setup(
+            self.window.ctx, *self.window.size, self.c_channels, self.process_idx
         )
-        return quad
+        # The presenter can delay and loop a stimulus.
+        s_frames = s_frames * speed + t0
+        frame_idxs, s_frames, triggers = fpspy.stim.loop(s_frames, triggers, loops)
+        s_frames = stim.delay(s_frames, self.delay)
+        triggers_arr = stim.decompress_triggers(triggers, len(frame_idxs))
+        assert len(frame_idxs) == len(s_frames) - 1
 
-    def create_buffer_and_vao(self, quad, program):
-        """
-        Creates a buffer and vertex array object (VAO) for rendering.
+        self.logger.info(f"Starting in {s_frames[0] - time.perf_counter():.3f} s.")
+        dropped_frames = self.shader_loop(prog, frame_idxs, s_frames, triggers_arr)
+        self.record_dropped_frames(dropped_frames)
+        prog.cleanup()
+        return close_after
 
-        Parameters
-        ----------
-        quad : np.array
-            Array of vertices for the quad.
-        program : moderngl.Program
-            The shader program used for rendering.
-
-        Returns
-        -------
-        moderngl.Buffer
-            The created vertex buffer object (VBO).
-        moderngl.VertexArray
-            The created vertex array object (VAO).
-        """
-        # Create a buffer from the quad vertices
-        vbo = self.window.ctx.buffer(quad.tobytes())
-        # Create a vertex array object
-        vao = self.window.ctx.simple_vertex_array(program, vbo, "in_pos")
-        return vbo, vao
-
-    def presentation_loop(self, texture_idxs, s_frames, triggers, textures, vao):
+    def shader_loop(self, shader: stim.StimProgram, frame_idxs, s_frames, triggers):
         """
         Main loop for presenting the stimulus.
-
-        Parameters
-        ----------
-        texture_idxs : np.ndarray
-            Indices indicating the order in which to present the textures.
-        s_frames : np.ndarray
-            Timestamps for when each frame should start.
-        triggers : np.ndarray
-            Indices of frames where triggers should occur.
-        textures : list
-            Textures for each stimulus frame.
-        vao : moderngl.VertexArray
-            The vertex array object for rendering.
         """
-        # Ensure the correct context is being used.
+        assert len(frame_idxs) == len(s_frames) - 1
+        N = len(frame_idxs)
         self.window.use()
-        if not (texture_idxs.shape == triggers.shape == s_frames.shape):
-            raise ValueError(
-                "Shapes of triggers, texture_idxs and s_frames must be the same."
-                f"Got {triggers.shape=}, {texture_idxs.shape=}, {s_frames.shape=}."
-            )
-        N = len(texture_idxs)
-        end_times = np.zeros(N, dtype=np.float32)
+        srgb_capable, srgb_enabled = probe_default_fbo_srgb()
+        _logger.debug(
+            f"Framebuffer sRGB capable: {srgb_capable}, enabled: {srgb_enabled}"
+        )
+        dropped_frames = []
         for i in range(N):
             is_exit = self.communicate()
             if is_exit:
-                return end_times
+                return dropped_frames
+
             # Sync frame presentation to the scheduled time.
             next_frame_time = s_frames[i + 1] if i < N - 1 else None
             skip = _wait_or_skip(s_frames[i], next_frame_time, self.fps)
             if skip:
+                dropped_frames.append(i)
                 continue
 
-            # Clear the window and render the stimulus.
+            # Clear the window, render the stimulus and swap buffers.
             self.window.ctx.clear(0, 0, 0)
-            textures[texture_idxs[i]].use(location=self.TEXTURE_UNIT)
-            vao.render(moderngl.TRIANGLES)
-
-            # Swap buffers, wrapped by callbacks and time record.
-            start_time = time.perf_counter()
+            shader.render(self.window.ctx, frame_idxs[i], i)
             self.window.swap_buffers()
-            end_times[i] = time.perf_counter() - start_time
             if triggers[i]:
                 self.notify_trigger()
-        return end_times
+        return dropped_frames
 
-    def cleanup_and_finalize(
-        self,
-        patterns,
-        vbo,
-        vao,
-        stimfile,
-        loops,
-        end_times,
-        desired_fps,
-    ):
-        """Clean up resources and write logs.
-
-        Parameters
-        ----------
-        patterns : list
-            List of texture objects to be released.
-        vbo : moderngl.Buffer
-            The vertex buffer object to be released.
-        vao : moderngl.VertexArray
-            The vertex array object to be released.
-        stimfile : str
-            Path to the stimulus file.
-        loops : int
-            Number of loops the stimulus was presented.
-        end_times : list
-            List of frame durations.
-        desired_fps : float
-            The desired frames per second for the presentation.
-        """
-        # Release all pattern textures
-        for pattern in patterns:
-            pattern.release()
-        del patterns
-        # Release the buffer and vertex array object
-        vbo.release()
-        vao.release()
-        del vbo
-        del vao
-
-        # Check which frames were dropped
-        dropped_frames = np.where(end_times - (1 / desired_fps) > 0)
-        wrong_frame_times = end_times[dropped_frames[0]]
-
-        if len(dropped_frames[0]) == 0:
-            dropped_frames = None
-            wrong_frame_times = None
-        else:
-            # Print the dropped frames
-            self.logger.error(f"dropped frames (idx): {dropped_frames[0]}")
-            self.logger.error(f"wrong frame times: {wrong_frame_times}")
-
-            # Write log with the stim_dict or any other relevant information
-        write_log(
-            stimfile,
-            loops,
-            dropped_frames,
-            wrong_frame_times,
+    def record_dropped_frames(self, dropped_frames):
+        """Record dropped frames to a CSV file."""
+        if not dropped_frames:
+            self.logger.info("No dropped frames.")
+            return
+        out_path = self.out_dir / self.dropped_frames_filename_fmt.format(
+            window_idx=self.process_idx
         )
-        return
-
-    def play(self, stim_path, loops, t0):
-        """Play the stimulus file.
-
-        Loads the stimulus file, creates textures from it and presents them.
-
-        Parameters
-        ----------
-            - stim_path : str
-                Path to the stimulus file.
-            - loops
-                Number of times to loop the stimulus.
-            - s_frames
-                The frame schedule: list of times to show each frame.
-        """
-        # Load the stim data
-        stim = fpspy.Stim.read_hdf5(stim_path)
-        frame_idxs, s_frames, triggers = _schedule(
-            t0, len(stim), stim.fps, stim.triggers, loops
-        )
-        triggers_arr = _decompress_triggers(triggers, len(frame_idxs))
-        assert len(frame_idxs) == len(s_frames), f"{len(frame_idxs)=}≠{len(s_frames)=}."
-        supports_channel_selection = stim.n_channels > 1
-        if supports_channel_selection:
-            stim = stim.with_channels(self.c_channels)
-        textures = self.to_textures(stim)
-
-        # Establish the shader program for presenting the stimulus.
-        program = self.setup_shader_program()
-        # Calculate scaling based on aspect ratio of window and stimulus.
-        quad = self.create_quad(stim.width, stim.height, *self.window.size)
-        # Create the buffer and vertex array object for the stimulus.
-        vbo, vao = self.create_buffer_and_vao(quad, program)
-
-        # Add delay to frames.
-        s_frames = _delay(s_frames, self.delay)
-
-        self.logger.info(
-            f"stimulus will start in {s_frames[0] - time.perf_counter()} seconds"
-        )
-        self.logger.info(f"Current time is {datetime.datetime.now()}")
-
-        # Start the presentation loop
-        end_times = self.presentation_loop(
-            frame_idxs, s_frames, triggers_arr, textures, vao
-        )
-        # Clean up and finalize the presentation
-        self.cleanup_and_finalize(
-            textures, vbo, vao, stim_path, loops, end_times, stim.fps
-        )
+        with open(out_path, "w", newline="") as f:
+            res = np.array(dropped_frames, copy=False)
+            np.savetxt(f, res, fmt="%d", delimiter=",")
+        self.logger.warning(f"Dropped frames: {dropped_frames}\t(saved to {out_path})")
 
 
 def write_log(
@@ -560,7 +374,7 @@ def write_log(
         Path to the stimulus file.
     """
     logfile = (
-        fpspy.config.user_log_dir() / f"{stimfile.stem}_"
+        fpspy.config.default_log_dir() / f"{stimfile.stem}_"
         f"{datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S.csv')}"
     )
 
@@ -594,31 +408,16 @@ def write_log(
         )
 
 
-def pyglet_app_with_arduino(
-    process_idx, config, queue, status_queue, delay=10, log_level="INFO"
+def pyglet_app(
+    process_idx,
+    config,
+    out_dir,
+    cmd_queue,
+    status_queue,
+    delay,
+    enable_triggers,
+    log_level="INFO",
 ):
-    """Start the pyglet app which sends Arduino triggers."""
-    # Configure logging for this child process
-    # Each process needs its own logging configuration
-    fpspy._logging.setup_logging(log_level)
-    arduino = fpspy.arduino.Arduino(
-        port=fpspy.config.get_arduino_port(config),
-        baud_rate=fpspy.config.get_arduino_baud_rate(config),
-        trigger_command=fpspy.config.get_arduino_trigger_command(config),
-    )
-    presenter = Presenter(
-        process_idx,
-        config,
-        queue,
-        status_queue,
-        delay=delay,
-    )
-    # Send arduino triggers on buffer swap
-    presenter.register_on_trigger(arduino.send_trigger)
-    presenter.run_empty()
-
-
-def pyglet_app(process_idx, config, queue, status_queue, delay=10, log_level="INFO"):
     """
     Start the pyglet app.
 
@@ -639,20 +438,177 @@ def pyglet_app(process_idx, config, queue, status_queue, delay=10, log_level="IN
                 Fullscreen mode.
             screen : int
                 Screen number.
-    queue : multiprocessing.Queue
-        Queue for communication with the main process (gui).
+    out_dir : str or Path
+        Output directory for logs and output data.
+    cmd_queue : multiprocessing.Queue
+        Queue for receiving commands from the main process.
+    status_queue : multiprocessing.Queue
+        Queue for sending status updates to the main process.
+    delay : float
+        Delay added before starting the stimulus presentation, in seconds.
+    render_target : RenderTarget
+        Render target for the stimulus presentation ('screen' or 'array').
+    enable_triggers : bool
+        Whether to enable Arduino triggers during the presentation.
     log_level : str
         Logging level for this process (DEBUG, INFO, WARNING, ERROR, CRITICAL).
     """
-    # Configure logging for this child process
-    # Each process needs its own logging configuration
-    fpspy._logging.setup_logging(log_level)
-
     presenter = Presenter(
         process_idx,
         config,
-        queue,
+        out_dir,
+        cmd_queue,
         status_queue,
         delay=delay,
     )
+    if enable_triggers:
+        arduino = fpspy.arduino.Arduino(
+            port=fpspy.config.get_arduino_port(config),
+            baud_rate=fpspy.config.get_arduino_baud_rate(config),
+            trigger_command=fpspy.config.get_arduino_trigger_command(config),
+        )
+        # Send arduino triggers on buffer swap
+        presenter.register_on_trigger(arduino.send_trigger)
     presenter.run_empty()
+
+
+class ArrayRenderer:
+    """Render to an offscreen array.
+
+    Unlike Presenter, this class is assumed to be used in the main process—not
+    spawned in a separate process. Because of this, a few things are different:
+
+      - The program can be created once before being sent to render(), and so the
+        arguments to render() are different, accepting a pre-created StimProgram.
+      - Logging doesn't need to worry about multiprocessing, so the file's _logger can
+        be used, instead of per-process loggers.
+    """
+
+    def __init__(self, process_idx, config):
+        self.process_idx = process_idx
+        window_config = config["windows"][str(self.process_idx)]
+        self.c_channels = window_config["channels"]
+        self.window_size = window_config["window_size"]  # (width, height)
+        self.clear_rgba = window_config["clear_rgba"]
+        self.ctx = moderngl.create_context(standalone=True)
+
+    def close_ctx(self):
+        """Close the context."""
+        if self.ctx is not None:
+            self.ctx.release()
+
+    def __del__(self):
+        self.close_ctx()
+
+    def render(self, prog: stim.StimProgram, convert_to_srgb=False):
+        """Render one of the supported shader-based stimuli to an array.
+
+        Loads the shader and metadata from files, then renders the stimulus
+        procedurally on the GPU without loading frames into memory.
+
+        Parameters
+        ----------
+        stim_path : str or Path
+            Path to the shader program file.
+        stim_config : str or None
+            Optional JSON config string for the stimulus.
+        convert_to_srgb : bool
+            Whether to convert the output from RGB to sRGB color space.
+        """
+        # The GUI can customize the stimulus through the config.
+        s_frames, triggers = prog.setup(
+            self.ctx, *self.window_size, self.c_channels, self.process_idx
+        )
+        n_frames = len(s_frames) - 1
+        frame_idxs = np.arange(n_frames)
+        arr = self.shader_loop(prog, frame_idxs)
+        prog.cleanup()
+
+        # Save frames
+        if convert_to_srgb:
+            arr = (fpspy.color.to_srgb(arr.astype(np.float32) / 255.0) * 255.0).astype(
+                np.uint8
+            )
+        _logger.info(
+            f"Rendered {len(frame_idxs)} frames to array, with {len(triggers)} "
+            f"triggers, for window {self.process_idx}."
+        )
+        return arr, s_frames, triggers
+
+    def shader_loop(self, shader: stim.StimProgram, frame_idxs):
+        """
+        Main loop for rendering the stimulus to numpy arrays.
+
+        Parameters
+        ----------
+        shader : stim.StimProgram
+            The shader program to render.
+        frame_idxs : array-like
+            Array of frame indices to render.
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (n_frames, height, width, 3) with rendered frames.
+        """
+        width, height = self.window_size
+        n_frames = len(frame_idxs)
+
+        # Create FBO with a texture for offscreen rendering
+        fbo_texture = self.ctx.texture((width, height), 4)  # RGBA
+        fbo = self.ctx.framebuffer(color_attachments=[fbo_texture])
+
+        # Pre-allocate output array (RGB only, drop alpha)
+        frames = np.empty((n_frames, height, width, 3), dtype=np.uint8)
+        fbo.use()
+        for i, frame_idx in enumerate(frame_idxs):
+            self.ctx.clear(*self.clear_rgba)
+            shader.render(self.ctx, frame_idx, i)
+            # Read pixels from the FBO
+            data = fbo_texture.read()
+            frame = np.frombuffer(data, dtype=np.uint8).reshape(height, width, 4)
+            # Keep RGB channels only
+            frames[i] = frame[:, :, :3]
+        fbo.release()
+        fbo_texture.release()
+        return frames
+
+
+def export(prog: stim.StimProgram, config):
+    n_windows = len(config["windows"])
+    win_outs = []
+    for idx in range(n_windows):
+        _logger.info(f"Exporting for window {idx + 1}/{n_windows}")
+        # Use ArrayRenderer for offscreen GPU rendering
+        renderer = ArrayRenderer(process_idx=1 + idx, config=config)
+        frames, s_frames, triggers = renderer.render(prog)
+        win_outs.append((frames, s_frames, triggers))
+
+    # Get channel mapping, from array to windows.
+    src_to_out = {}
+    for w_idx, w in enumerate(config["windows"]):
+        for c_idx, ch in enumerate(w["channels"]):
+            src_to_out[ch] = [w_idx, c_idx]
+    max_ch = max(src_to_out.keys())
+    stim_shapes = [r[0].shape[0:3] for r in win_outs]
+    assert all(
+        s == stim_shapes[0] for s in stim_shapes
+    ), "All windows must have the same (f, h, w) stimulus shape."
+    f, h, w = stim_shapes[0]
+    # Create the output stimulus array.
+    frames = np.zeros((f, h, w, max_ch + 1), dtype=np.uint8)
+    for ch in range(max_ch + 1):
+        if ch in src_to_out:
+            w_idx, c_idx = src_to_out[ch]
+            frames[:, :, :, ch] = win_outs[w_idx][0][:, :, :, c_idx]
+    # We need triggers and frame times from only the first window.
+    s_frames = win_outs[0][1]
+    triggers = win_outs[0][2]
+    out_stim = fpspy.stim.StimArray(
+        frames,
+        frame_times=s_frames,
+        zoom=1,
+        triggers=triggers,
+        label="exported_stimulus",
+    )
+    return out_stim
