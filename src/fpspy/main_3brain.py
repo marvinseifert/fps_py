@@ -10,6 +10,7 @@ Author: Marvin Seifert
 # pydevd_pycharm.settrace('localhost', port=5678, stdout_to_server=True, stderr_to_server=True)
 
 import multiprocessing as mp
+import logging
 import typer
 from pathlib import Path
 import time
@@ -20,6 +21,7 @@ import fpspy.stim
 import fpspy.queue
 import fpspy._logging as _logging
 
+_logger = logging.getLogger(__name__)
 
 gui_app = typer.Typer(help="fpspy GUI. Preset visual stimuli with OpenGL.")
 cli_app = typer.Typer(help="fpspy CLI. Preset visual stimuli with OpenGL.")
@@ -138,22 +140,21 @@ def cli(
         "-d",
         help="Delay before starting the stimulus presentation (in seconds)",
     ),
-    log_level: str = typer.Option(
-        "INFO",
-        "--log-level",
-        help="Set logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
-        case_sensitive=False,
+    verbose: int = typer.Option(
+        0,
+        "--verbose",
+        "-v",
+        count=True,
+        help="Increase verbosity (-v for INFO, -vv for DEBUG)",
     ),
 ):
     """Run a stimulus from the command line without the GUI."""
-    try:
-        _logging.setup_logging(log_level)
-    except ValueError as e:
-        raise typer.BadParameter(str(e))
     # Load configuration.
     config = fpspy.config.load_config(config_path)
     n_windows = len(config["windows"])
     # Load stimulus.
+    log_level = "WARNING" if verbose == 0 else "INFO" if verbose == 1 else "DEBUG"
+    _logging.setup_main_logging(log_level)
     if not stim_path.exists():
         typer.echo(f"Error: stimulus file not found: {stim_path}", err=True)
         raise typer.Exit(1)
@@ -169,6 +170,7 @@ def cli(
     status_queue = mp.Queue()
 
     # Create a reference time point
+    _logger.info(f"{out_dir} [output dir]")
     t0 = time.perf_counter()
     # Put play command in each window's queue
     for queue in cmd_queues:
@@ -180,8 +182,7 @@ def cli(
             t0=t0,
         )
 
-    typer.echo(f"Playing stimulus: {stim_path}")
-    typer.echo(f"  Frames: {info['n_frames']}, FPS: {info['fps']}, Loops: {loops}")
+    _logger.info("Stimulus playback completed.")
 
     # Start presentation lead process
     p_lead = mp.Process(

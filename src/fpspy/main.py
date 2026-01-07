@@ -38,18 +38,17 @@ def gui(
         f"config from {fpspy.config.user_config_dir()}. If that fails, an "
         "bundled default is used.",
     ),
-    log_level: str = typer.Option(
-        "INFO",
-        "--log-level",
-        "-l",
-        help="Set logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
-        case_sensitive=False,
+    verbose: int = typer.Option(
+        0,
+        "--verbose",
+        "-v",
+        count=True,
+        help="Increase verbosity (-v for INFO, -vv for DEBUG)",
     ),
 ):
     # Configure logging
-    numeric_level = getattr(logging, log_level.upper(), None)
-    if not isinstance(numeric_level, int):
-        raise typer.BadParameter(f"Invalid log level: {log_level}")
+    log_level = "WARNING" if verbose == 0 else "INFO" if verbose == 1 else "DEBUG"
+    numeric_level = getattr(logging, log_level, None)
     logging.basicConfig(
         level=numeric_level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -155,18 +154,18 @@ def cli(
         "--change-every",
         help="Change colour logic every N frames",
     ),
-    log_level: str = typer.Option(
-        "INFO",
-        "--log-level",
-        help="Set logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
-        case_sensitive=False,
+    verbose: int = typer.Option(
+        0,
+        "--verbose",
+        "-v",
+        count=True,
+        help="Increase verbosity (-v for INFO, -vv for DEBUG)",
     ),
 ):
     """Run a stimulus from the command line without the GUI."""
     # Configure logging
-    numeric_level = getattr(logging, log_level.upper(), None)
-    if not isinstance(numeric_level, int):
-        raise typer.BadParameter(f"Invalid log level: {log_level}")
+    log_level = "WARNING" if verbose == 0 else "INFO" if verbose == 1 else "DEBUG"
+    numeric_level = getattr(logging, log_level, None)
     logging.basicConfig(
         level=numeric_level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
