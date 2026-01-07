@@ -383,36 +383,6 @@ class Presenter:
 
         return vbo, vao
 
-    def setup_presentation(self, frames, loops, desired_fps):
-        """
-        Sets up the presentation parameters including time per frame and pattern indices.
-
-        Parameters
-        ----------
-        frames : int
-            The number of frames in the stimulus pattern.
-        loops : int
-            The number of times the stimulus pattern should loop.
-        desired_fps : float
-            The desired frames per second for the presentation.
-
-        Returns
-        -------
-        float
-            The time allocated per frame.
-        list
-            The list of pattern indices for the presentation loop.
-        """
-        # Calculate the time per frame for the desired FPS
-        time_per_frame = 1 / desired_fps
-
-        # Calculate the pattern indices for each frame in the loop
-        pattern_indices = np.arange(frames)  # Generate indices for each frame
-        pattern_indices = np.tile(
-            pattern_indices, loops
-        )  # Repeat indices for each loop
-
-        return time_per_frame, pattern_indices.tolist()
 
     def presentation_loop(
         self,
