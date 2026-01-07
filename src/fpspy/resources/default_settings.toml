@@ -15,6 +15,7 @@ trigger_command = "T"
 [paths]
 # Override if you want to work from non-default directory for stimuli etc.
 data_dir = ""
+log_dir = ""
 
 # --- Window definitions ---
 [windows."1"]

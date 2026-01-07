@@ -666,7 +666,7 @@ def write_log(
         Path to the stimulus file.
     """
     filename_format = (
-        fpspy.config.user_log_dir()
+        fpspy.config.default_log_dir()
         / f"{stimfile}_{datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S.csv')}"
     )
 
