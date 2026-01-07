@@ -32,6 +32,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [ 
+[dependency-groups]
+dev = [
+    "pytest (>=9.0.2,<10.0.0)",
+]
 	"debugpy>=1.8.16, <2.0.0",
 	"pydevd-pycharm>=252.23892.515, <252.23893.0"
 ]
