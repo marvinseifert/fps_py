@@ -312,7 +312,7 @@ class Presenter:
         prog.cleanup()
         return close_after
 
-    def shader_loop(self, shader: stim.StimProgram, frame_idxs, s_frames, triggers):
+    def shader_loop(self, prog: stim.StimProgram, frame_idxs, s_frames, triggers):
         """
         Main loop for presenting the stimulus.
         """
@@ -338,7 +338,7 @@ class Presenter:
 
             # Clear the window, render the stimulus and swap buffers.
             self.window.ctx.clear(0, 0, 0)
-            shader.render(self.window.ctx, frame_idxs[i], i)
+            prog.render(self.window.ctx, frame_idxs[i], i)
             self.window.swap_buffers()
             if triggers[i]:
                 self.notify_trigger()
