@@ -22,7 +22,6 @@ import fpspy.play_3brain
 import fpspy.stim
 import fpspy.queue
 import fpspy._logging as _logging
-import fpspy.cal_gui_3brain
 
 _logger = logging.getLogger(__name__)
 
