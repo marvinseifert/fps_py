@@ -181,9 +181,7 @@ class Presenter:
         self.queue = cmd_queue
         self.status_queue = status_queue
         self.out_dir = Path(out_dir)
-        self.c_channels = config["windows"][str(self.process_idx)]["channels"]
         self.delay = delay
-
         self.setup_logging()
         self.setup_window(config)
 
@@ -212,6 +210,9 @@ class Presenter:
         settings.WINDOW["resizable"] = False
         settings.WINDOW["title"] = "Noise Presentation"
 
+        self.c_channels = window_config["channels"]
+        self.mirror = window_config["mirror"]
+        self.rotation = window_config["rotation"]
         # Assume constant. Keep both fps and duration for convenience.
         self.fps = config["fps"]
         self.frame_duration = 1 / self.fps
@@ -320,7 +321,8 @@ class Presenter:
         """Load a stimuli; shared by load() and play()."""
         prog = stim.create_program(stim_path, stim_config)
         s_frames, triggers = prog.setup(
-            self.window.ctx, *self.window.size, self.c_channels, self.process_idx
+            self.window.ctx, *self.window.size, self.c_channels,
+            self.mirror, self.rotation, self.process_idx
         )
         # The presenter can delay and loop a stimulus.
         s_frames = s_frames * speed + t0
@@ -606,6 +608,8 @@ class ArrayRenderer:
         self.process_idx = process_idx
         window_config = config["windows"][str(self.process_idx)]
         self.c_channels = window_config["channels"]
+        self.mirror = window_config["mirror"]
+        self.rotation = window_config["rotation"]
         self.window_size = window_config["window_size"]  # (width, height)
         self.clear_rgba = window_config["clear_rgba"]
         self.ctx = moderngl.create_context(standalone=True)
@@ -635,7 +639,8 @@ class ArrayRenderer:
         """
         # The GUI can customize the stimulus through the config.
         s_frames, triggers = prog.setup(
-            self.ctx, *self.window_size, self.c_channels, self.process_idx
+            self.ctx, *self.window_size, self.c_channels,
+            self.mirror, self.rotation, self.process_idx
         )
         n_frames = len(s_frames) - 1
         frame_idxs = np.arange(n_frames)

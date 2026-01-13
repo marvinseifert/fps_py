@@ -616,6 +616,8 @@ class StimProgram(Protocol):
         win_width,
         win_height,
         channels: Optional[Sequence[int]],
+        mirror: Optional[bool],
+        rotation: Optional[float],
         win_id: Optional[int] = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -624,6 +626,25 @@ class StimProgram(Protocol):
         Returns the frame times and triggers (two numpy arrays).
 
         Frame times is a 1D array of length num_frames + 1 (includes the end time).
+
+        Mirror and rotate describe how the window has been configured differently than
+        the stimulus expects by default. The stimulus program may optionally use this
+        information to adjust rendering.
+
+        Parameters
+        ----------
+        ctx : moderngl.Context
+            The OpenGL context.
+        win_width : int
+            The width of the window in pixels.
+        win_height : int
+            The height of the window in pixels.
+        channels : Optional[Sequence[int]]
+            The channels the window wants to display.
+        mirror : bool
+            Whether to mirror the stimulus horizontally.
+        rotation : int
+            The rotation (degrees) to apply to the stimulus (after any mirror).
         """
         ...
 
@@ -703,13 +724,18 @@ class TextureSequence(StimProgram):
         self.win_id = None
         self._setup_done = False
 
-    def setup(self, ctx, win_width, win_height, channels=None, win_id=None):
+    def setup(self, ctx, win_width, win_height, channels=None, mirror=None,
+              rotation=None, win_id=None):
         if self._setup_done:
             raise RuntimeError("TextureSequence.setup() has already been called.")
         self.win_id = win_id
 
         if channels is not None:
             self.stim_arr = self.stim_arr.with_channels(channels)
+        if mirror is None:
+            mirror = False
+        if rotation is None:
+            rotation = 0
 
         # Load textures
         F, H, W, C = self.stim_arr.frames.shape
@@ -724,6 +750,9 @@ class TextureSequence(StimProgram):
                 self.textures.append(tex)
         # Compile program and load vertices.
         self._program = self._compile_program(ctx)
+        # Set mirror/rotation uniforms for UV coordinate transformation.
+        self._program["u_mirror"].value = mirror
+        self._program["u_rotation"].value = float(rotation)
         zoom = self.stim_arr.zoom
         quad = create_centered_quad(W * zoom, H * zoom, win_width, win_height)
         self._vbo = ctx.buffer(quad.tobytes())
@@ -832,10 +861,16 @@ class ProceduralShader(StimProgram):
         win_width,
         win_height,
         channels: Optional[Sequence[int]],
+        mirror: Optional[bool] = None,
+        rotation: Optional[float] = None,
         win_id: Optional[int] = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Initialize the shader program."""
         self.win_id = win_id
+        if mirror is None:
+            mirror = False
+        if rotation is None:
+            rotation = 0
 
         # Load shaders and compile the program.
         resource_dir = importlib.resources.files("fpspy.resources")
@@ -847,6 +882,9 @@ class ProceduralShader(StimProgram):
 
         # Set static uniforms from the uniforms dict.
         _set_uniforms(self._program, self.uniforms)
+        # Set mirror/rotation uniforms for UV coordinate transformation.
+        self._program["u_mirror"].value = mirror
+        self._program["u_rotation"].value = float(rotation)
 
         quad = create_centered_quad(self.width, self.height, win_width, win_height)
         self._vbo = ctx.buffer(quad.tobytes())
