@@ -13,6 +13,7 @@ import logging
 from pathlib import Path
 import time
 from typing import Callable, Optional, Literal
+import multiprocessing as mp
 import moderngl
 import moderngl_window
 from moderngl_window.conf import settings
@@ -24,6 +25,7 @@ import fpspy.arduino
 import OpenGL.GL as gl
 import fpspy.stim as stim
 import fpspy.color
+import dataclasses
 
 # We are okay with any interleaving caused by multiple processes. The logs are not
 # critical, and each process has its own log files anyway.
@@ -78,6 +80,16 @@ def _wait_or_skip(target_time, next_frame_time: Optional[float], fps):
 
 # Callback is given the frame index.
 OnTriggerCallback = Callable[[], None]
+
+
+@dataclasses.dataclass
+class PlayState:
+    """State needed to be stored when stepping through a stimulus via commands."""
+
+    prog: stim.StimProgram
+    frame_idxs: np.ndarray
+    triggers: np.ndarray
+    current_frame: int
 
 
 class Presenter:
@@ -179,6 +191,12 @@ class Presenter:
         # Purpose: to allow for arduino color changing.
         self._on_trigger = None
         self._on_stop = None
+        # Play state is used when loading and stepping (not needed for one-shot play).
+        self.play_state: Optional[PlayState] = None
+
+    def _is_step_play(self):
+        """Check if we are in step-play mode."""
+        return self.play_state is not None and self.play_state.current_frame >= 0
 
     def setup_window(self, config):
         settings.WINDOW["class"] = "moderngl_window.context.pyglet.Window"
@@ -244,8 +262,10 @@ class Presenter:
         """Do nothing, waiting for commands from the main process."""
         self.window.use()
         while not self.window.is_closing:
-            self.window.ctx.clear(*self.clear_rgba)
-            self.window.swap_buffers()
+            # Only clear/swap if no stimulus is loaded (otherwise show_frame handles it)
+            if not self._is_step_play():
+                self.window.ctx.clear(*self.clear_rgba)
+                self.window.swap_buffers()
             self.communicate()  # Check for commands from the main process (gui)
             time.sleep(0.001)  # Sleep for 1 ms to avoid busy waiting
         self.close_window()
@@ -256,26 +276,134 @@ class Presenter:
             return
         command = fpspy.queue.get_from(self.queue)
 
-        stop = False
+        do_stop = False
+        do_destroy = False
         match command.type:
-            case "play":
-                do_destroy = self.play(*command.args, **command.kwargs)
-                if do_destroy:
-                    stop = True
-                    self.close_window()
             case "white_screen":
                 pass
+            case "load":
+                self.load(*command.args, **command.kwargs)
+                # Send back total frame count for GUI (don't show frame yet)
+                if self.play_state is not None:
+                    total = len(self.play_state.frame_idxs)
+                    self.status_queue.put({"total_frames": total})
+            case "step_next":
+                if self.play_state is not None:
+                    do_stop = self.step_next(**command.kwargs)
+                    # step_next corrects current_frame if needed, shows it, then increments
+                    # So the frame shown is current_frame - 1 after increment
+                    frame_shown = self.play_state.current_frame - 1 if self.play_state else -1
+                    self.status_queue.put({"stepped": frame_shown})
+                else:
+                    self.status_queue.put("no_stimulus")
+            case "step_prev":
+                if self.play_state is not None:
+                    # step_prev decrements first, then shows
+                    do_stop = self.step_prev(**command.kwargs)
+                    frame_shown = self.play_state.current_frame
+                    self.status_queue.put({"stepped": frame_shown})
+                else:
+                    self.status_queue.put("no_stimulus")
+            case "play":
+                do_stop = self.play(*command.args, **command.kwargs)
             case "stop":
-                stop = True
-                self.notify_stop()
-                self.status_queue.put("done")
+                do_stop = True
             case "destroy":
-                stop = True
-                self.close_window()
-        return stop
+                do_destroy = True
+        if do_stop or do_destroy:
+            self.notify_stop()
+            self.status_queue.put("done")
+        if do_destroy:
+            self.close_window()
+
+    def _load(self, stim_path, stim_config, loops, t0, speed):
+        """Load a stimuli; shared by load() and play()."""
+        prog = stim.create_program(stim_path, stim_config)
+        s_frames, triggers = prog.setup(
+            self.window.ctx, *self.window.size, self.c_channels, self.process_idx
+        )
+        # The presenter can delay and loop a stimulus.
+        s_frames = s_frames * speed + t0
+        frame_idxs, s_frames, triggers = fpspy.stim.loop(s_frames, triggers, loops)
+        triggers_arr = stim.decompress_triggers(triggers, len(frame_idxs))
+        assert len(frame_idxs) == len(s_frames) - 1
+        return prog, frame_idxs, s_frames, triggers_arr
+
+    def load(self, stim_path, stim_config, loops):
+        """Load (for step-play) one of the supported stimuli.
+
+        Parameters
+        ----------
+        path : str or Path
+            Path to the shader program file.
+        stim_config : str or None
+            Optional JSON config string for the stimulus.
+        """
+        prog, frame_idxs, s_frames, triggers_arr = self._load(
+            stim_path, stim_config, loops, t0=0.0, speed=1.0
+        )
+        # We don't need s_frames here.
+        self.play_state = PlayState(
+            prog=prog,
+            frame_idxs=frame_idxs,
+            triggers=triggers_arr,
+            current_frame=-1,
+        )
+
+    def step_next(self, close_if_done=False):
+        assert self.play_state is not None, "No stimulus loaded."
+        state = self.play_state
+        # If starting from -1 (just loaded), increment to 0 first
+        if state.current_frame < 0:
+            state.current_frame = 0
+        if state.current_frame >= len(state.frame_idxs):
+            state.prog.cleanup()
+            self.play_state = None
+            return close_if_done
+        self.show_frame(state.current_frame)
+        state.current_frame += 1
+        if state.current_frame >= len(state.frame_idxs):
+            state.prog.cleanup()
+            self.play_state = None
+            return close_if_done
+        return False
+
+    def step_prev(self, close_if_done=False):
+        assert self.play_state is not None, "No stimulus loaded."
+        state = self.play_state
+        if state.current_frame <= 0:
+            _logger.warning("Already at first frame; presenting it again.")
+        state.current_frame = max(0, state.current_frame - 1)
+        self.show_frame(state.current_frame)
+        if state.current_frame == 0:
+            if close_if_done:
+                state.prog.cleanup()
+                self.play_state = None
+            return close_if_done
+        return False
+
+    def show_frame(self, frame):
+        """Step one frame in the loaded stimulus.
+
+        This function operates similar to shader_loop().
+
+        Returns
+        -------
+        bool
+            Whether to close the presenter after this step.
+        """
+        assert self.play_state is not None, "No stimulus loaded."
+        state = self.play_state
+        self.window.use()
+        # Clear window (to black is fine), render the stimulus and swap buffers.
+        self.window.ctx.clear(0, 0, 0)
+        state.prog.render(self.window.ctx, state.frame_idxs[frame], frame)
+        self.window.swap_buffers()
+        if state.triggers[frame]:
+            self.notify_trigger()
 
     def play(self, stim_path, stim_config, loops, t0, speed=None, close_after=False):
-        """Play one of the supported shader-based stimuli.
+        """Play one of the supported stimuli.
 
         Loads the shader and metadata from files, then renders the stimulus
         procedurally on the GPU without loading frames into memory.
@@ -292,19 +420,10 @@ class Presenter:
             Override the playback speed.
         """
         speed = speed if speed is not None else 1.0
-
-        # The GUI can customize the stimulus through the config.
-        prog = stim.create_program(stim_path, stim_config)
-        s_frames, triggers = prog.setup(
-            self.window.ctx, *self.window.size, self.c_channels, self.process_idx
+        prog, frame_idxs, s_frames, triggers_arr = self._load(
+            stim_path, stim_config, loops, t0, speed
         )
-        # The presenter can delay and loop a stimulus.
-        s_frames = s_frames * speed + t0
-        frame_idxs, s_frames, triggers = fpspy.stim.loop(s_frames, triggers, loops)
         s_frames = stim.delay(s_frames, self.delay)
-        triggers_arr = stim.decompress_triggers(triggers, len(frame_idxs))
-        assert len(frame_idxs) == len(s_frames) - 1
-
         self.logger.info(f"Starting in {s_frames[0] - time.perf_counter():.3f} s.")
         dropped_frames = self.shader_loop(prog, frame_idxs, s_frames, triggers_arr)
         self.record_dropped_frames(dropped_frames)
@@ -335,7 +454,7 @@ class Presenter:
                 dropped_frames.append(i)
                 continue
 
-            # Clear the window, render the stimulus and swap buffers.
+            # Clear window (to black is fine), render the stimulus and swap buffers.
             self.window.ctx.clear(0, 0, 0)
             prog.render(self.window.ctx, frame_idxs[i], i)
             self.window.swap_buffers()
@@ -611,3 +730,30 @@ def export(prog: stim.StimProgram, config):
         label="exported_stimulus",
     )
     return out_stim
+
+
+def start_presenter_processes(config, out_dir, delay, enable_triggers, log_level):
+    """Start presenter processes for all windows and return them."""
+    # Create queues for inter-process communication.
+    n_windows = len(config["windows"])
+    cmd_queues = [mp.Queue() for _ in range(n_windows)]
+    status_queue = mp.Queue()
+    processes = []
+    for idx in range(1, len(cmd_queues) + 1):
+        p = mp.Process(
+            target=pyglet_app,
+            args=(
+                idx,
+                config,
+                out_dir,
+                cmd_queues[idx - 1],
+                status_queue,
+                delay,
+                # Only enable triggers for the first window.
+                enable_triggers if idx == 1 else False,
+                log_level,
+            ),
+        )
+        p.start()
+        processes.append(p)
+    return processes, cmd_queues, status_queue
