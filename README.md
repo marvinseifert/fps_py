@@ -59,13 +59,6 @@ You can also run stimuli directly from the command line:
 poetry run fpspy <path-to-stim>
 ```
 
-## 3Brain CLI
-3Brain setup currently supports the CLI only.
-
-```bash
-poetry run fpspy-3brain <path-to-config>
-```
-
 ## Other scripts
 Show information about a stimulus file:
 
@@ -208,7 +201,9 @@ You can enter the name of the noise file into the field left to the "Generate No
 ![Noise](images/noise.PNG)
 
 # Future work:
-
+    - Combine reduce play.py and play_3brain.py to a single play.py. Same for the two mains. When doing this, consider the next point.
+    - I think the project could benefit from being reduced to a core set of functionality, while the rest moves into an examples folder. The project should shine in how minimal and simple to understand it is.
+    - Move the stimulus generation code (checkerboard noise etc) into a separate package, or at least a separate submodule.
     - Implement colour noise (this is already in the shaders, just needs to be updated in the play_noise.py script)
     - Implement fullscreen on secondary monitor (this is a bug in moderngl_window)
     - Expand so single boxes can be shown and moved around (experimental feature, look at the "moving_box.py" script)
