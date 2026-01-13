@@ -208,7 +208,7 @@ class Presenter:
         settings.WINDOW["double_buffer"] = True
         settings.WINDOW["vsync"] = True
         settings.WINDOW["resizable"] = False
-        settings.WINDOW["title"] = "Noise Presentation"
+        settings.WINDOW["title"] = f"Win {self.process_idx} Presenter"
 
         self.c_channels = window_config["channels"]
         self.mirror = window_config["mirror"]
