@@ -456,7 +456,7 @@ class CalibrationGui(QMainWindow):
     def send_to_all(self, cmd_type: str, **kwargs):
         """Send a command to all presenter windows."""
         for queue in self.cmd_queues:
-            fpspy.queue.put(queue, cmd_type, **kwargs)
+            fpspy.queue.put_onto(queue, cmd_type, **kwargs)
 
     def wait_for_responses(self, timeout: float = 5.0):
         """Wait for responses from all presenter windows."""
