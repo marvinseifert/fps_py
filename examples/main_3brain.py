@@ -1,6 +1,6 @@
 """
 This is the main file for the project. It starts two processes, one for the GUI and one
-for the stimulus presentation. The GUI is implemented using tkinter and the stimulus
+for the stimulus presentation. The GUI is implemented using Qt and the stimulus
 presentation is implemented using pyglet.
 
 Author: Marvin Seifert
@@ -22,6 +22,7 @@ import fpspy.play_3brain
 import fpspy.stim
 import fpspy.queue
 import fpspy._logging as _logging
+import fpspy.cal_gui_3brain
 
 _logger = logging.getLogger(__name__)
 
@@ -31,33 +32,6 @@ StimType = Literal["auto", "h5", "shader"]
 
 gui_app = typer.Typer(help="fpspy GUI. Preset visual stimuli with OpenGL.")
 cli_app = typer.Typer(help="fpspy CLI. Preset visual stimuli with OpenGL.")
-
-
-def _start_presenter_processes(config, out_dir, delay, enable_triggers, log_level):
-    """Start presenter processes for all windows and return them."""
-    # Create queues for inter-process communication.
-    n_windows = len(config["windows"])
-    cmd_queues = [mp.Queue() for _ in range(n_windows)]
-    status_queue = mp.Queue()
-    processes = []
-    for idx in range(1, len(cmd_queues) + 1):
-        p = mp.Process(
-            target=fpspy.play_3brain.pyglet_app,
-            args=(
-                idx,
-                config,
-                out_dir,
-                cmd_queues[idx - 1],
-                status_queue,
-                delay,
-                # Only enable triggers for the first window.
-                enable_triggers if idx == 1 else False,
-                log_level,
-            ),
-        )
-        p.start()
-        processes.append(p)
-    return processes, cmd_queues, status_queue
 
 
 def _preview_h5_stim(stim_path: Path, loops: int):
@@ -144,13 +118,15 @@ def play(
     t0 = time.perf_counter()
 
     # Start presenter processes, and wait to finish.
-    presenter_processes, cmd_queues, status_queue = _start_presenter_processes(
-        config, out_dir, delay, enable_triggers, log_level
+    presenter_processes, cmd_queues, status_queue = (
+        fpspy.play_3brain.start_presenter_processes(
+            config, out_dir, delay, enable_triggers, log_level
+        )
     )
     play_cmd = "play"
     # Create queues for inter-process communication.
     for queue in cmd_queues:
-        fpspy.queue.put(
+        fpspy.queue.put_onto(
             queue,
             play_cmd,
             stim_path=stim_path,
@@ -216,7 +192,6 @@ def export(
 
     # Load configuration.
     config = fpspy.config.load_config(config_path)
-    config = fpspy.config.load_config(config_path)
     if stim_config_path is not None:
         with stim_config_path.open("r", encoding="utf-8") as f:
             stim_config = f.read()
@@ -225,7 +200,6 @@ def export(
     prog = fpspy.stim.create_program(stim_path, stim_config)
     stim = fpspy.play_3brain.export(prog, config)
     stim.write_hdf5(out_path)
-
 
 
 @gui_app.command()
@@ -264,8 +238,10 @@ def gui(
     out_dir = fpspy.config.create_outdir(config)
 
     # Start presenter processes.
-    presenter_processes, cmd_queues, status_queue = _start_presenter_processes(
-        config, out_dir, delay, log_level
+    presenter_processes, cmd_queues, status_queue = (
+        fpspy.play_3brain.start_presenter_processes(
+            config, out_dir, delay, True, log_level
+        )
     )
 
     # Start GUI process.
@@ -279,6 +255,9 @@ def gui(
     # Wait for all processes to finish.
     for p in [gui_process] + presenter_processes:
         p.join()
+
+
+
 
 
 def run_gui():

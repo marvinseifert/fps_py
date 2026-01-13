@@ -29,6 +29,8 @@ dependencies = [
     "einops (>=0.8.1,<0.9.0)",
     "rich (>=14.2.0,<15.0.0)",
     "pyopengl (>=3.1.10,<4.0.0)",
+    "requests (>=2.31.0,<3.0.0)",
+    "PyQt6 (>=6.6.0,<7.0.0)",
 ]
 
 
@@ -44,7 +46,6 @@ pycharm = [
 [project.scripts]
 fpspy = "fpspy.main:run_cli"
 fpspy-gui = "fpspy.main:run_gui"
-fpspy-3brain = "fpspy.main_3brain:run_cli"
 fpspy-info = "fpspy.main:run_info"
 
 [project.gui-scripts]
