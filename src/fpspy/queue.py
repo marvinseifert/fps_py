@@ -13,12 +13,12 @@ class Command:
     kwargs: dict
 
 
-def put(queue, cmd_type: str, *args, **kwargs):
+def put_onto(queue, cmd_type: str, *args, **kwargs):
     command = Command(type=cmd_type, args=list(args), kwargs=kwargs)
     queue.put(command)
 
 
-def get(queue):
+def get_from(queue):
     cmd = queue.get()
     if not isinstance(cmd, Command):
         raise ValueError(f"Received invalid command from queue. Got: {cmd}")

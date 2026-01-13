@@ -212,7 +212,7 @@ def cli(
 
     # Put play command in each window's queue
     for queue in cmd_queues:
-        fpspy.queue.put(
+        fpspy.queue.put_onto(
             queue,
             "play",
             stim_path=stim_path,

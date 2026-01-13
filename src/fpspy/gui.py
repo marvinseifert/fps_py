@@ -354,7 +354,7 @@ class FpspyGui:
 
         # Send play command to each window's dedicated queue
         for queue in self.cmd_queues:
-            fpspy.queue.put(queue, "play",
+            fpspy.queue.put_onto(queue, "play",
                 stim_path=stim_path,
                 loops=int(self.loop_entry.get()),
                 arduino_colours=self.colours.get(),
@@ -370,7 +370,7 @@ class FpspyGui:
         """Stop the stimulus playback."""
         # Send stop command to each window's dedicated queue
         for queue in self.cmd_queues:
-            fpspy.queue.put(queue, "stop")
+            fpspy.queue.put_onto(queue, "stop")
         self.arduino_done_callback()
         self.update_status("Stimulus stopped")
 
@@ -459,7 +459,7 @@ class FpspyGui:
 
         # Send white_screen command to each window's dedicated queue
         for queue in self.cmd_queues:
-            fpspy.queue.send(queue, "white_screen")
+            fpspy.queue.put_onto(queue, "white_screen")
         self.ard_queue.put(self.arduino_cmd_var.get())
         arduino_thread = threading.Thread(target=self.arduino_done_callback)
         self.root.after(100, arduino_thread.start)
@@ -493,7 +493,7 @@ class FpspyGui:
                 pass
         # Send stop command to each window's dedicated queue
         for queue in self.cmd_queues:
-            fpspy.queue.put(queue, "stop")
+            fpspy.queue.put_onto(queue, "stop")
         # self.arduino_running = False
         # self.status_queue.get()
         # self.arduino_light.config(bg="red")
@@ -592,8 +592,8 @@ class FpspyGui:
         self.ard_queue.put("destroy")
         # Send stop and destroy commands to each window's dedicated queue
         for queue in self.cmd_queues:
-            fpspy.queue.put(queue, "stop")
-            fpspy.queue.put(queue, "destroy")
+            fpspy.queue.put_onto(queue, "stop")
+            fpspy.queue.put_onto(queue, "destroy")
 
         # Will be read by the pyglet thread to close the window.
         self.root.destroy()

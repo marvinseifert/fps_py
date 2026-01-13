@@ -157,7 +157,7 @@ class Presenter:
         """Check and execute commands from the main process (gui)."""
         if self.queue.empty():
             return
-        command = fpspy.queue.get(self.queue)
+        command = fpspy.queue.get_from(self.queue)
 
         match command.type:
             case "play":
