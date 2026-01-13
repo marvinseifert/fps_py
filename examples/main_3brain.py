@@ -1,13 +1,4 @@
-"""
-This is the main file for the project. It starts two processes, one for the GUI and one
-for the stimulus presentation. The GUI is implemented using Qt and the stimulus
-presentation is implemented using pyglet.
-
-Author: Marvin Seifert
-"""
-
-# import pydevd_pycharm
-# pydevd_pycharm.settrace('localhost', port=5678, stdout_to_server=True, stderr_to_server=True)
+"""Main entry point for our use of fpspy with our 3brain setup."""
 
 import multiprocessing as mp
 import logging
@@ -254,9 +245,6 @@ def gui(
     # Wait for all processes to finish.
     for p in [gui_process] + presenter_processes:
         p.join()
-
-
-
 
 
 def run_gui():
