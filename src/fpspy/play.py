@@ -9,7 +9,6 @@ import moderngl
 import moderngl_window
 from moderngl_window.conf import settings
 import pyglet
-import threading
 import importlib.resources
 import fpspy.arduino
 import fpspy.config

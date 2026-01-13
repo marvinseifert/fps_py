@@ -68,7 +68,7 @@ def loop(s_frames, triggers, n_loops):
         s_frame_repeats.append(start_times + i * period)
     last_frame = period * n_loops + s_frames[0]
     s_frames_out = np.concatenate(s_frame_repeats + [np.array([last_frame])])
-    assert len(idxs_out)+1 == len(s_frames_out)
+    assert len(idxs_out) + 1 == len(s_frames_out)
     assert len(triggers_out) == len(triggers) * n_loops
     return idxs_out, s_frames_out, triggers_out
 
@@ -565,7 +565,7 @@ def _preview_hdf5_v1(f):
         "n_frames": n_frames,
         "n_triggers": n_triggers,
         "fps": fps,
-        "duration": duration, # seconds
+        "duration": duration,  # seconds
         "height": h,
         "width": w,
         "channels": c,

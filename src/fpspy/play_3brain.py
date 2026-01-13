@@ -22,7 +22,6 @@ import fpspy.queue
 import fpspy._logging
 import fpspy.arduino
 import OpenGL.GL as gl
-import logging
 import fpspy.stim as stim
 import fpspy.color
 
