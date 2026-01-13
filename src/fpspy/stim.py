@@ -200,7 +200,7 @@ class StimArray:
 
     def __init__(
         self,
-        frames,
+        frames,  # f, h, w, 1
         frame_times: float | Sequence[float],
         zoom,
         triggers=None,
@@ -793,6 +793,8 @@ class ProceduralShader(StimProgram):
 
     This class represents an arbitrary shader with its uniforms. The shader is
     loaded from a file, and uniforms are set from a dictionary.
+
+    This class is not a core part of fpspy, and could be moved to an example directory.
     """
 
     def __init__(
@@ -801,9 +803,10 @@ class ProceduralShader(StimProgram):
         width: int,
         height: int,
         uniforms: dict,
-        n_frames: Optional[int] = None,
-        fps: Optional[int] = None,
-        triggers: Optional[np.ndarray] = None,
+        # Proposed interface. Need to have enough info to return frame times and triggers.
+        n_frames: int,
+        spf: float,
+        triggers: np.ndarray,
         label: Optional[str] = None,
     ):
         # Assume all programs use the same vertex shader (basic quad).
@@ -812,7 +815,7 @@ class ProceduralShader(StimProgram):
         self.height = height
         self.uniforms = uniforms
         self.n_frames = n_frames
-        self.fps = fps
+        self.spf = spf
         self.triggers = triggers
         self.label = label
 
@@ -822,9 +825,15 @@ class ProceduralShader(StimProgram):
         self._vao = None
         self._vbo = None
 
+
     def setup(
-        self, ctx: moderngl.Context, win_width, win_height, win_id: Optional[int] = None
-    ) -> None:
+        self,
+        ctx: moderngl.Context,
+        win_width,
+        win_height,
+        channels: Optional[Sequence[int]],
+        win_id: Optional[int] = None,
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """Initialize the shader program."""
         self.win_id = win_id
 
@@ -842,6 +851,8 @@ class ProceduralShader(StimProgram):
         quad = create_centered_quad(self.width, self.height, win_width, win_height)
         self._vbo = ctx.buffer(quad.tobytes())
         self._vao = ctx.simple_vertex_array(self._program, self._vbo, "in_pos")
+        frame_times = spf_to_frame_times(self.spf, self.n_frames)
+        return frame_times, self.triggers
 
     def render(self, ctx, frame_idx, global_frame_num) -> None:
         """Render a single frame.
