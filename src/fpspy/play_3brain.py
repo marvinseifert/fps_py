@@ -761,4 +761,6 @@ def start_presenter_processes(config, out_dir, delay, enable_triggers, log_level
         )
         p.start()
         processes.append(p)
+        # Delay slightly to increase consistency of the window order in the OS.
+        time.sleep(0.005) 
     return processes, cmd_queues, status_queue
