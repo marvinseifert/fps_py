@@ -9,6 +9,7 @@ import einops
 import moderngl
 import importlib
 import importlib.util
+import copy
 
 
 _logger = logging.getLogger(__name__)
@@ -349,7 +350,7 @@ class StimArray:
             metadata=self.metadata,
         )
 
-    def write_hdf5(self, path: Path):
+    def write_hdf5(self, path: Path, dataset_opts: Optional[dict] = None):
         """Write the stimulus to an HDF5 file.
 
         Parameters
@@ -357,9 +358,8 @@ class StimArray:
         path : Path
             The path to the HDF5 file where the stimulus metadata will be stored.
         """
-
         with h5py.File(path, "w") as f:
-            _write_hdf5_v1(self, f)
+            _write_hdf5_v1(self, f, dataset_opts)
 
     @staticmethod
     def read_hdf5(path: Path):
@@ -414,7 +414,26 @@ class StimArray:
         return frame_times
 
 
-def _write_hdf5_v1(stim: StimArray, f):
+
+def _write_hdf5_v1(stim: StimArray, f, dataset_opts):
+    if dataset_opts is None:
+        dataset_opts = {
+            "compression": "gzip",
+            "compression_opts": 4,
+            "chunks": True,
+            # A compression related shuffle (doesn't affect data).
+            "shuffle": True,
+        }
+    def filter_opts(arr, dataset_opts):
+        """Prevent errors on empty arrays."""
+        res = copy.deepcopy(dataset_opts)
+        # The last check covers isinstance(arr, h5py.Empty):
+        if np.isscalar(arr) or arr.size == 0 or arr.shape is None: 
+            del res["compression"]
+            del res["chunks"]
+            del res["shuffle"]
+            del res["compression_opts"]
+        return res
     f.attrs["format_version"] = "1"
     label = stim.label if stim.label is not None else h5py.Empty("f")
     if stim._triggers is None or len(stim._triggers) == 0:
@@ -423,10 +442,15 @@ def _write_hdf5_v1(stim: StimArray, f):
         triggers = stim._triggers
     f.attrs["zoom"] = stim.zoom
     f.attrs["label"] = label
-    f.create_dataset("triggers", data=triggers, dtype="uint64")
-    f.create_dataset("frames", data=stim.frames, dtype="uint8")
+    f.create_dataset("triggers", data=triggers, dtype="uint64",
+                     **filter_opts(triggers, dataset_opts))
+    f.create_dataset("frames", data=stim.frames, dtype="uint8",
+                     **filter_opts(stim.frames, dataset_opts))
     # HDF5 supports 0-dim datasets, so we can store the float|Sequence[float] directly.
-    f.create_dataset("frame_times", data=stim._frame_times, dtype="float64")
+    f.create_dataset(
+        "frame_times", data=stim._frame_times, dtype="float64",
+        **filter_opts(stim._frame_times, dataset_opts)
+    )
 
     # Always create metadata group and store attributes
     metadata_group = f.create_group("metadata")
@@ -724,8 +748,16 @@ class TextureSequence(StimProgram):
         self.win_id = None
         self._setup_done = False
 
-    def setup(self, ctx, win_width, win_height, channels=None, mirror=None,
-              rotation=None, win_id=None):
+    def setup(
+        self,
+        ctx,
+        win_width,
+        win_height,
+        channels=None,
+        mirror=None,
+        rotation=None,
+        win_id=None,
+    ):
         if self._setup_done:
             raise RuntimeError("TextureSequence.setup() has already been called.")
         self.win_id = win_id
@@ -853,7 +885,6 @@ class ProceduralShader(StimProgram):
         self._program = None
         self._vao = None
         self._vbo = None
-
 
     def setup(
         self,
