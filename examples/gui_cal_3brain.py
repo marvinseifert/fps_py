@@ -417,12 +417,11 @@ class CalibrationGui(QMainWindow):
 
     def update_frame_label(self):
         """Update the frame counter label."""
+        last_frame = self.total_frames - 1
         if self.current_frame < 0:
-            self.frame_label.setText(f"Frame: - / {self.total_frames}")
+            self.frame_label.setText(f"Frame: - [0–{last_frame}]")
         else:
-            self.frame_label.setText(
-                f"Frame: {self.current_frame} / {self.total_frames - 1}"
-            )
+            self.frame_label.setText(f"Frame: {self.current_frame} [0–{last_frame}]")
 
     def update_button_states(self):
         """Update button enabled/disabled states based on current state."""
@@ -435,7 +434,7 @@ class CalibrationGui(QMainWindow):
             self.capture_remaining_btn.setEnabled(False)
             self.cancel_btn.setEnabled(True)
         elif self.stimulus_loaded:
-            self.prev_btn.setEnabled(self.current_frame > 0)
+            self.prev_btn.setEnabled(self.current_frame >= 0)
             self.next_btn.setEnabled(self.current_frame < self.total_frames - 1)
             has_dir = self.capture_dir is not None
             frame_displayed = self.current_frame >= 0
@@ -497,8 +496,8 @@ class CalibrationGui(QMainWindow):
         self.step_next()
 
     def on_previous(self):
-        """Step to the previous frame."""
-        if self.current_frame <= 0:
+        """Step to the previous frame (or to cleared state at -1)."""
+        if self.current_frame < 0:
             return
         self.step_prev()
 

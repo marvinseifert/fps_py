@@ -291,16 +291,15 @@ class Presenter:
             case "step_next":
                 if self.play_state is not None:
                     do_stop = self.step_next(**command.kwargs)
-                    # step_next corrects current_frame if needed, shows it, then increments
-                    # So the frame shown is current_frame - 1 after increment
-                    frame_shown = self.play_state.current_frame - 1 if self.play_state else -1
+                    # current_frame is now the frame that is displayed
+                    frame_shown = self.play_state.current_frame if self.play_state else -1
                     self.status_queue.put({"stepped": frame_shown})
                 else:
                     self.status_queue.put("no_stimulus")
             case "step_prev":
                 if self.play_state is not None:
-                    # step_prev decrements first, then shows
                     do_stop = self.step_prev(**command.kwargs)
+                    # current_frame is now the frame that is displayed (-1 for cleared)
                     frame_shown = self.play_state.current_frame
                     self.status_queue.put({"stepped": frame_shown})
                 else:
@@ -353,36 +352,39 @@ class Presenter:
         )
 
     def step_next(self, close_if_done=False):
-        assert self.play_state is not None, "No stimulus loaded."
-        state = self.play_state
-        # If starting from -1 (just loaded), increment to 0 first
-        if state.current_frame < 0:
-            state.current_frame = 0
-        if state.current_frame >= len(state.frame_idxs):
-            state.prog.cleanup()
-            self.play_state = None
-            return close_if_done
-        self.show_frame(state.current_frame)
-        state.current_frame += 1
-        if state.current_frame >= len(state.frame_idxs):
-            state.prog.cleanup()
-            self.play_state = None
-            return close_if_done
-        return False
+        """Step to the next frame.
 
-    def step_prev(self, close_if_done=False):
+        current_frame represents the frame currently displayed (-1 if none).
+        """
         assert self.play_state is not None, "No stimulus loaded."
         state = self.play_state
-        if state.current_frame <= 0:
-            _logger.warning("Already at first frame; presenting it again.")
-        state.current_frame = max(0, state.current_frame - 1)
-        self.show_frame(state.current_frame)
-        if state.current_frame == 0:
+        next_frame = state.current_frame + 1
+        if next_frame >= len(state.frame_idxs):
             if close_if_done:
                 state.prog.cleanup()
                 self.play_state = None
             return close_if_done
+        state.current_frame = next_frame
+        self.show_frame(state.current_frame)
         return False
+
+    def step_prev(self, close_if_done=False):
+        """Step to previous frame, or clear screen if going to -1."""
+        assert self.play_state is not None, "No stimulus loaded."
+        state = self.play_state
+        prev_frame = state.current_frame - 1
+        state.current_frame = prev_frame
+        if prev_frame < 0:
+            self.clear_screen()
+        else:
+            self.show_frame(state.current_frame)
+        return False
+
+    def clear_screen(self):
+        """Clear the screen to black."""
+        self.window.use()
+        self.window.ctx.clear(0, 0, 0)
+        self.window.swap_buffers()
 
     def show_frame(self, frame):
         """Step one frame in the loaded stimulus.
