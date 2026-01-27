@@ -565,8 +565,8 @@ class CalibrationGui(QMainWindow):
             settings_text = f"Exposure: {exposure} µs, Gain: {gain}"
             if not isinstance(exposure, int):
                 raise ValueError(f"Non-integer exposure time received: {exposure=}")
-            if not isinstance(gain, int):
-                raise ValueError(f"Non-integer gain received: {gain=}")
+            if not isinstance(gain, (int, float)):
+                raise ValueError(f"Non-numeric gain received: {gain=}")
             self._exposure_ms = exposure
 
             self.camera_settings_label.setText(settings_text)
