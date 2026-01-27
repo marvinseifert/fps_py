@@ -56,12 +56,14 @@ class CaptureWorker(QThread):
         capture_dir: Path,
         server_url: str,
         frame_idx: int,
+        exposure_ms: Optional[int] = None,
         single_capture: bool = True,
     ):
         super().__init__()
         self.capture_dir = capture_dir
         self.server_url = server_url
         self.frame_idx = frame_idx
+        self.exposure_ms = exposure_ms
         self.single_capture = single_capture
         self.cancelled = False
 
@@ -75,9 +77,22 @@ class CaptureWorker(QThread):
 
         # For rate calculation
         self.capture_times: list[float] = []
+        self.last_frame_time = None
 
     def cancel(self):
         self.cancelled = True
+
+    def wait_for_exposure(self):
+        if self.last_frame_time is None:
+            return
+        assert self.exposure_ms is not None
+        wait_until = self.last_frame_time + (self.exposure_ms / 1_000_000) 
+        now = time.perf_counter()
+        wait_dur = wait_until - now
+        if wait_dur > 0:
+            _logger.info(f"Waiting {round(wait_dur*1000)} ms for exposure")
+            time.sleep(wait_dur)
+
 
     def capture_image(self, frame_idx: int, retry: bool = True) -> bool:
         """Capture an image from the server and save it.
@@ -88,12 +103,14 @@ class CaptureWorker(QThread):
 
         for attempt in range(2 if retry else 1):
             try:
+                self.wait_for_exposure()
                 response = requests.post(
                     f"{self.server_url}/capture",
                     params={"format": "dng"},
                     timeout=timeout,
                 )
                 response.raise_for_status()
+                self.last_frame_time = time.perf_counter()
 
                 filename = f"capture_{frame_idx:04d}.dng"
                 filepath = self.capture_dir / filename
@@ -257,6 +274,8 @@ class CalibrationGui(QMainWindow):
         self.stimulus_loaded = False
         self.capture_dir: Optional[Path] = out_dir
         self.worker: Optional[CaptureWorker] = None
+        self._exposure_ms = None
+        self._last_frame_time = None
 
         # Server settings
         self.server_url = "http://139.184.162.187:5000"
@@ -324,7 +343,7 @@ class CalibrationGui(QMainWindow):
         url_row.addWidget(self.server_url_edit)
 
         self.refresh_btn = QPushButton("Refresh Settings")
-        self.refresh_btn.clicked.connect(self.on_refresh_settings)
+        self.refresh_btn.clicked.connect(self._refresh_settings)
         url_row.addWidget(self.refresh_btn)
 
         self.save_config_btn = QPushButton("Save Config")
@@ -531,7 +550,7 @@ class CalibrationGui(QMainWindow):
             self.update_status(f"Step error: {e}")
         return False
 
-    def on_refresh_settings(self):
+    def _refresh_settings(self):
         """Fetch and display camera settings from the server."""
         server_url = self.server_url_edit.text()
         self.update_status(f"Fetching settings from {server_url}...")
@@ -544,6 +563,11 @@ class CalibrationGui(QMainWindow):
             exposure = settings.get("exposure_time", "N/A")
             gain = settings.get("analogue_gain", "N/A")
             settings_text = f"Exposure: {exposure} µs, Gain: {gain}"
+            if not isinstance(exposure, int):
+                raise ValueError(f"Non-integer exposure time received: {exposure=}")
+            if not isinstance(gain, int):
+                raise ValueError(f"Non-integer gain received: {gain=}")
+            self._exposure_ms = exposure
 
             self.camera_settings_label.setText(settings_text)
             self.update_status("Settings fetched successfully")
@@ -552,6 +576,12 @@ class CalibrationGui(QMainWindow):
             _logger.error(f"Failed to fetch settings: {e}")
             self.camera_settings_label.setText(f"Error: {e}")
             self.update_status(f"Failed to fetch settings: {e}")
+
+    def exposure_ms(self) -> int:
+        if self._exposure_ms is None:
+            self._refresh_settings()
+        assert self._exposure_ms is not None
+        return self._exposure_ms
 
     def on_save_config(self):
         """Fetch camera config from server and save to output directory."""
@@ -575,6 +605,7 @@ class CalibrationGui(QMainWindow):
             _logger.error(f"Failed to fetch config: {e}")
             self._show_error(f"Failed to fetch config: {e}")
 
+
     def on_capture(self):
         """Capture the current frame in a background thread."""
         if self.capture_dir is None:
@@ -589,6 +620,7 @@ class CalibrationGui(QMainWindow):
             self.capture_dir,
             self.server_url_edit.text(),
             self.current_frame,
+            self.exposure_ms(),
             single_capture=True,
         )
         self.worker.progress.connect(self._on_worker_progress)
@@ -614,6 +646,7 @@ class CalibrationGui(QMainWindow):
             self.capture_dir,
             self.server_url_edit.text(),
             0,
+            self.exposure_ms(),
             single_capture=False,
         )
         self.worker.total_frames = self.total_frames
@@ -776,7 +809,7 @@ def cal_gui(
         ),
     ),
     enable_triggers: bool = typer.Option(
-        True,
+        False,
         "--triggers/--no-triggers",
         help="Enable Arduino triggers during presentation.",
     ),
@@ -800,6 +833,10 @@ def cal_gui(
     config = fpspy.config.load_config(config_path)
     if out_dir is None:
         out_dir = fpspy.config.create_outdir(config)
+
+    # We add subdirectory based on stimulus filename
+    stim_stem = stim_path.stem
+    out_dir = out_dir / f"{stim_stem}"
 
     # Start presenter process (single window for calibration).
     presenter_processes, cmd_queues, status_queue = (
