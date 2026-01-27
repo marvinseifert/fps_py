@@ -86,13 +86,12 @@ class CaptureWorker(QThread):
         if self.last_frame_time is None:
             return
         assert self.exposure_ms is not None
-        wait_until = self.last_frame_time + (self.exposure_ms / 1_000_000) 
+        wait_until = self.last_frame_time + (self.exposure_ms / 1_000_000)
         now = time.perf_counter()
         wait_dur = wait_until - now
         if wait_dur > 0:
             _logger.info(f"Waiting {round(wait_dur*1000)} ms for exposure")
             time.sleep(wait_dur)
-
 
     def capture_image(self, frame_idx: int, retry: bool = True) -> bool:
         """Capture an image from the server and save it.
@@ -604,7 +603,6 @@ class CalibrationGui(QMainWindow):
         except requests.RequestException as e:
             _logger.error(f"Failed to fetch config: {e}")
             self._show_error(f"Failed to fetch config: {e}")
-
 
     def on_capture(self):
         """Capture the current frame in a background thread."""

@@ -143,9 +143,6 @@ def create_centered_quad(
         f"stim shape (w, h): ({stim_width}, {stim_height}), "
         f"window shape (w, h): ({win_width}, {win_height}), "
     )
-    window_aspect = win_width / win_height
-    texture_aspect = stim_width / stim_height
-
     # If the stimulus has shape (f, h, w, c) == (f, 1, 1, c), we broadcast by
     # having the single pixel cover the whole screen.
     do_broadcast = stim_height == 1 and stim_width == 1
@@ -163,7 +160,7 @@ def create_centered_quad(
             ],
             dtype=np.float32,
         )
-    # fmt: on
+        # fmt: on
     else:
         hh = stim_height / 2.0
         hw = stim_width / 2.0
@@ -179,7 +176,7 @@ def create_centered_quad(
             ],
             dtype=np.float32,
         )
-    # fmt: on
+        # fmt: on
         # We must consider window aspect ratio, and stimulus mirror and rotation.
         # Determine scaling factors based on aspect ratios
         # [x, y]^T = scale(rotate(mirror([x, y]^T)))
@@ -204,7 +201,6 @@ def create_centered_quad(
                 [0, y_scale],
             ]
         )
-        print(f"{scale=}")
         transform = np.eye(2)
         if mirror:
             transform = mirror_transform @ transform
@@ -215,7 +211,7 @@ def create_centered_quad(
             _logger.info(
                 f"Stimulus is larger than window and will be clipped. {transform=}"
             )
-        print(f"{transform=}")
+        _logger.debug(f"{transform=}")
         # Apply
         quad = (transform @ quad.T).T
     # Insure the quad is centered at the origin.
@@ -233,7 +229,7 @@ def create_centered_quad(
     quad = einops.rearrange(quad, "v c -> (v c)")
     # Array must be contiguous float32, in anticipation of calling asbytes().
     quad = np.ascontiguousarray(quad, dtype=np.float32)
-    print(f"{quad=}")
+    _logger.debug(f"{quad=}")
     return quad
 
 
