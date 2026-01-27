@@ -1,3 +1,4 @@
+import math
 import logging
 import time
 from pathlib import Path
@@ -110,7 +111,9 @@ def delay(s_frames, delay):
     return s_frames
 
 
-def create_centered_quad(stim_width, stim_height, win_width, win_height):
+def create_centered_quad(
+    stim_width, stim_height, win_width, win_height, mirror: bool, rotation: float
+):
     """Create a quad that has corners at each stimulus corner.
 
     If the stimulus is 1x1 pixel, the quad covers the whole screen (broadcasting).
@@ -125,6 +128,10 @@ def create_centered_quad(stim_width, stim_height, win_width, win_height):
         The width of the window in pixels.
     height : int
         The height of the window in pixels.
+    mirror : bool
+        Whether to mirror the stimulus horizontally.
+    rotation : float
+        The rotation (degrees) to apply to the stimulus (after any mirror).
 
     Returns
     -------
@@ -132,39 +139,101 @@ def create_centered_quad(stim_width, stim_height, win_width, win_height):
         A tuple of scaling factors (scale_x, scale_y) and the quad vertices array.
     """
     # Calculate the aspect ratio of the window and the texture
+    _logger.debug(
+        f"stim shape (w, h): ({stim_width}, {stim_height}), "
+        f"window shape (w, h): ({win_width}, {win_height}), "
+    )
     window_aspect = win_width / win_height
     texture_aspect = stim_width / stim_height
+
     # If the stimulus has shape (f, h, w, c) == (f, 1, 1, c), we broadcast by
     # having the single pixel cover the whole screen.
     do_broadcast = stim_height == 1 and stim_width == 1
     if do_broadcast:
-        scale_x = scale_y = 1
+        # Fullscreen with no sense of orientation.
+        # fmt: off
+        quad = np.array(
+            [  # x   y
+               [-1,  1],  # top left
+               [-1, -1],  # bottom left
+               [ 1,  1],  # top right
+               [ 1,  1],  # top right
+               [-1, -1],  # bottom left
+               [ 1, -1],  # bottom right
+            ],
+            dtype=np.float32,
+        )
+    # fmt: on
     else:
+        hh = stim_height / 2.0
+        hw = stim_width / 2.0
+        # fmt: off
+        quad = np.array(
+            [  #  x    y
+               [-hw,  hh],  # top left
+               [-hw, -hh],  # bottom left
+               [ hw,  hh],  # top right
+               [ hw,  hh],  # top right
+               [-hw, -hh],  # bottom left
+               [ hw, -hh],  # bottom right
+            ],
+            dtype=np.float32,
+        )
+    # fmt: on
+        # We must consider window aspect ratio, and stimulus mirror and rotation.
         # Determine scaling factors based on aspect ratios
-        scale_x = stim_width / win_width
-        scale_y = stim_height / win_height
-        # TODO: what is this for?
-        if (window_aspect == texture_aspect) & (window_aspect > 1):
-            scale_x = scale_y = 1
+        # [x, y]^T = scale(rotate(mirror([x, y]^T)))
+        x_scale = 1 / win_width 
+        y_scale = 1 / win_height 
+        mirror_transform = np.array(
+            [
+                [-1 if mirror else 1, 0],
+                [0, 1],
+            ]
+        )
+        rotate_transform = np.array(
+            [
+                [np.cos(np.radians(rotation)), -np.sin(np.radians(rotation))],
+                [np.sin(np.radians(rotation)), np.cos(np.radians(rotation))],
+            ]
+        )
+        # Scale down from full window to stimulus size.
+        scale = np.array(
+            [
+                [x_scale, 0],
+                [0, y_scale],
+            ]
+        )
+        print(f"{scale=}")
+        transform = np.eye(2)
+        if mirror:
+            transform = mirror_transform @ transform
+        if rotation != 0:
+            transform = rotate_transform @ transform
+        transform = scale @ transform
+        if np.any(transform > 1.0):
+            _logger.info(
+                f"Stimulus is larger than window and will be clipped. {transform=}"
+            )
+        print(f"{transform=}")
+        # Apply
+        quad = (transform @ quad.T).T
+    # Insure the quad is centered at the origin.
+    xmin = np.min(quad[:, 0])
+    xmax = np.max(quad[:, 0])
+    ymin = np.min(quad[:, 1])
+    ymax = np.max(quad[:, 1])
+    in_centered = (
+        math.isclose(xmin + xmax, 0.0, abs_tol=1e-6)
+        and math.isclose(ymin + ymax, 0.0, abs_tol=1e-6)
 
-    # Establish the vertices for the texture in the shader program
-    quad = np.array(
-        [
-            -scale_x,
-            scale_y,  # top left
-            -scale_x,
-            -scale_y,  # bottom left
-            scale_x,
-            scale_y,  # top right
-            scale_x,
-            scale_y,  # top right
-            -scale_x,
-            -scale_y,  # bottom left
-            scale_x,
-            -scale_y,  # bottom right
-        ],
-        dtype=np.float32,
     )
+    assert in_centered, f"Quad is not centered at origin. {quad=}"
+
+    quad = einops.rearrange(quad, "v c -> (v c)")
+    # Array must be contiguous float32, in anticipation of calling asbytes().
+    quad = np.ascontiguousarray(quad, dtype=np.float32)
+    print(f"{quad=}")
     return quad
 
 
@@ -414,7 +483,6 @@ class StimArray:
         return frame_times
 
 
-
 def _write_hdf5_v1(stim: StimArray, f, dataset_opts):
     if dataset_opts is None:
         dataset_opts = {
@@ -424,16 +492,18 @@ def _write_hdf5_v1(stim: StimArray, f, dataset_opts):
             # A compression related shuffle (doesn't affect data).
             "shuffle": True,
         }
+
     def filter_opts(arr, dataset_opts):
         """Prevent errors on empty arrays."""
         res = copy.deepcopy(dataset_opts)
         # The last check covers isinstance(arr, h5py.Empty):
-        if np.isscalar(arr) or arr.size == 0 or arr.shape is None: 
+        if np.isscalar(arr) or arr.size == 0 or arr.shape is None:
             del res["compression"]
             del res["chunks"]
             del res["shuffle"]
             del res["compression_opts"]
         return res
+
     f.attrs["format_version"] = "1"
     label = stim.label if stim.label is not None else h5py.Empty("f")
     if stim._triggers is None or len(stim._triggers) == 0:
@@ -442,14 +512,21 @@ def _write_hdf5_v1(stim: StimArray, f, dataset_opts):
         triggers = stim._triggers
     f.attrs["zoom"] = stim.zoom
     f.attrs["label"] = label
-    f.create_dataset("triggers", data=triggers, dtype="uint64",
-                     **filter_opts(triggers, dataset_opts))
-    f.create_dataset("frames", data=stim.frames, dtype="uint8",
-                     **filter_opts(stim.frames, dataset_opts))
+    f.create_dataset(
+        "triggers", data=triggers, dtype="uint64", **filter_opts(triggers, dataset_opts)
+    )
+    f.create_dataset(
+        "frames",
+        data=stim.frames,
+        dtype="uint8",
+        **filter_opts(stim.frames, dataset_opts),
+    )
     # HDF5 supports 0-dim datasets, so we can store the float|Sequence[float] directly.
     f.create_dataset(
-        "frame_times", data=stim._frame_times, dtype="float64",
-        **filter_opts(stim._frame_times, dataset_opts)
+        "frame_times",
+        data=stim._frame_times,
+        dtype="float64",
+        **filter_opts(stim._frame_times, dataset_opts),
     )
 
     # Always create metadata group and store attributes
@@ -782,11 +859,10 @@ class TextureSequence(StimProgram):
                 self.textures.append(tex)
         # Compile program and load vertices.
         self._program = self._compile_program(ctx)
-        # Set mirror/rotation uniforms for UV coordinate transformation.
-        self._program["u_mirror"].value = mirror
-        self._program["u_rotation"].value = float(rotation)
         zoom = self.stim_arr.zoom
-        quad = create_centered_quad(W * zoom, H * zoom, win_width, win_height)
+        quad = create_centered_quad(
+            W * zoom, H * zoom, win_width, win_height, mirror, rotation
+        )
         self._vbo = ctx.buffer(quad.tobytes())
         self._vao = ctx.simple_vertex_array(self._program, self._vbo, "in_pos")
         self._setup_done = True

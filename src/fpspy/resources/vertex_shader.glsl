@@ -2,26 +2,10 @@
 
 in vec2 in_pos;
 uniform vec2 scale;
-uniform bool u_mirror;      // Mirror horizontally (applied first)
-uniform float u_rotation;   // Rotation in degrees (0, 90, 180, 270)
 out vec2 uv;
 
 void main() {
     vec2 pos = in_pos;
-
-    // Apply mirror to vertex position
-    if (u_mirror) {
-        pos.x = -pos.x;
-    }
-
-    // Apply rotation to vertex position (around origin)
-    if (u_rotation != 0.0) {
-        float angle = radians(u_rotation);
-        float c = cos(angle);
-        float s = sin(angle);
-        pos = vec2(c * pos.x - s * pos.y,
-                   s * pos.x + c * pos.y);
-    }
 
     gl_Position = vec4(pos, 0.0, 1.0);
 
