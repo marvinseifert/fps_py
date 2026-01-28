@@ -834,7 +834,8 @@ def cal_gui(
 
     # We add subdirectory based on stimulus filename
     stim_stem = stim_path.stem
-    out_dir = out_dir / f"{stim_stem}"
+    sud_dir = out_dir / f"{stim_stem}"
+    sud_dir.mkdir(parents=False, exist_ok=True)
 
     # Start presenter process (single window for calibration).
     presenter_processes, cmd_queues, status_queue = (
