@@ -195,6 +195,14 @@ The noise can be created using the parameters "checkerboard size", "window size"
 
 You can enter the name of the noise file into the field left to the "Generate Noise" button. This file will be stored in /stimuli folder. If you want to have shuffled noise, you can check the "Shuffle" box. The shuffle logic is shuffle every frame and shuffle 4 positions in x and y, resulting in 16 different positions in total. The "Estimated size" text shows the estimated size of the noise file. 
 
+## 3Brain specific
+It would be nice to have the fpspy package offer a core set of features, and all of the setup specific stuff to be auxillary. I started moving 3Brain specific features to the `examples` folder.
+
+Here there is:
+
+    - `examples/gui_cal_3brain.py`: A GUI for presenting stimuli one frame at a time, while interfacing with a Raspberry Pi camera used for taking photos from the projection target.
+    - `examples/main_3brain.py`: For presenting stimuli to a real sample.
+
 
 
 **That's it, enjoy the noise!** </br>

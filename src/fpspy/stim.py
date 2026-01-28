@@ -850,7 +850,7 @@ class TextureSequence(StimProgram):
                 tex = ctx.texture(
                     (W, H), C, self.stim_arr.frames[i].tobytes(), samples=0, alignment=1
                 )
-                # Use nearest-neighbor filtering for crisp pixels when zoomed.
+                # No filtering. Expect aliasing.
                 tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
                 self.textures.append(tex)
         # Compile program and load vertices.
@@ -896,7 +896,7 @@ class TextureSequence(StimProgram):
                 samples=0,
                 alignment=1,
             )
-            # Use nearest-neighbor filtering for crisp pixels when zoomed.
+            # No filtering. Expect aliasing.
             self.single_tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
             self.single_tex.use(location=self.TEXTURE_UNIT)
         else:

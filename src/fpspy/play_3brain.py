@@ -597,6 +597,11 @@ def pyglet_app(
 class ArrayRenderer:
     """Render to an offscreen array.
 
+    Useful reference: https://github.com/szabolcsdombi/headless-moderngl-experiment/blob/master/src/main_multisample.py
+
+    Note: currently, we don't support multisampling, so there may be aliasing present
+    that is not present when rendering to screen with multisampling enabled.
+
     Unlike Presenter, this class is assumed to be used in the main process—not
     spawned in a separate process. Because of this, a few things are different:
 
