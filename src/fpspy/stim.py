@@ -179,9 +179,9 @@ def create_centered_quad(
         # fmt: on
         # We must consider window aspect ratio, and stimulus mirror and rotation.
         # Determine scaling factors based on aspect ratios
-        # [x, y]^T = scale(rotate(mirror([x, y]^T)))
-        x_scale = 1 / win_width 
-        y_scale = 1 / win_height 
+        # Scale from stimulus pixels to NDC space (-1 to 1)
+        x_scale = 2 / win_width 
+        y_scale = 2 / win_height 
         mirror_transform = np.array(
             [
                 [-1 if mirror else 1, 0],
