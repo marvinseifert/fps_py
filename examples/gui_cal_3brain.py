@@ -831,17 +831,18 @@ def cal_gui(
     config = fpspy.config.load_config(config_path)
     if out_dir is None:
         out_dir = fpspy.config.create_outdir(config)
+    out_dir.mkdir(parents=False, exist_ok=True)
 
     # We add subdirectory based on stimulus filename
     stim_stem = stim_path.stem
-    sud_dir = out_dir / f"{stim_stem}"
-    sud_dir.mkdir(parents=False, exist_ok=True)
+    sub_dir = out_dir / f"{stim_stem}"
+    sub_dir.mkdir(parents=False, exist_ok=True)
 
     # Start presenter process (single window for calibration).
     presenter_processes, cmd_queues, status_queue = (
         fpspy.play_3brain.start_presenter_processes(
             config,
-            out_dir,
+            sub_dir,
             delay=0,
             enable_triggers=enable_triggers,
             log_level=log_level,
@@ -849,7 +850,7 @@ def cal_gui(
     )
 
     # Start calibration GUI (in main process for simplicity).
-    capture_dir = out_dir / "captures"
+    capture_dir = sub_dir / "captures"
     qt_app(config, capture_dir, cmd_queues, status_queue, stim_path)
 
     # Cleanup
