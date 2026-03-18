@@ -711,8 +711,8 @@ def export(prog: stim.StimProgram, config):
         _logger.info(f"Exporting for window {idx + 1}/{n_windows}")
         # Use ArrayRenderer for offscreen GPU rendering
         renderer = ArrayRenderer(process_idx=1 + idx, config=config)
-        frames, s_frames, triggers = renderer.render(prog)
-        win_outs.append((frames, s_frames, triggers))
+        frames, frame_times, triggers = renderer.render(prog)
+        win_outs.append((frames, frame_times, triggers))
 
     # Get channel mapping, from array to windows.
     src_to_out = {}
@@ -732,11 +732,13 @@ def export(prog: stim.StimProgram, config):
             w_idx, c_idx = src_to_out[ch]
             frames[:, :, :, ch] = win_outs[w_idx][0][:, :, :, c_idx]
     # We need triggers and frame times from only the first window.
-    s_frames = win_outs[0][1]
+    frame_times = win_outs[0][1]
+    frame_durs = np.diff(frame_times)
+    assert len(frame_durs) == f, f"{len(frame_durs)=}, {f=}"
     triggers = win_outs[0][2]
     out_stim = fpspy.stim.StimArray(
         frames,
-        frame_times=s_frames,
+        frame_durations=frame_durs,
         zoom=1,
         triggers=triggers,
         label="exported_stimulus",

@@ -11,6 +11,9 @@ import moderngl
 import importlib
 import importlib.util
 import copy
+import numpy.typing as npt
+import warnings
+from typing import Any, Dict
 
 
 _logger = logging.getLogger(__name__)
@@ -27,6 +30,15 @@ __all__ = [
 CURRENT_HDF5_FORMAT_VER = "1"
 TEXTURE_FRAG_SHADER = "fragment_shader_colour.glsl"
 QUAD_VERTEX_SHADER = "vertex_shader.glsl"
+
+
+def loop_triggers(triggers, n_frames, n_loops):
+    trigger_repeats = [triggers]
+    for i in range(1, n_loops):
+        trigger_repeats.append(triggers + i * n_frames)
+    triggers_out = np.concatenate(trigger_repeats)
+    triggers_out = triggers_out.astype(int)
+    return triggers_out
 
 
 def loop(s_frames, triggers, n_loops):
@@ -59,11 +71,7 @@ def loop(s_frames, triggers, n_loops):
     # Frame indices.
     idxs_out = np.tile(np.arange(len(start_times)), n_loops)
     # Trigger indices.
-    trigger_repeats = [triggers]
-    for i in range(1, n_loops):
-        trigger_repeats.append(triggers + i * n_frames)
-    triggers_out = np.concatenate(trigger_repeats)
-    triggers_out = triggers_out.astype(int)
+    triggers_out = loop_triggers(triggers, n_frames, n_loops)
     # Frame schedule.
     s_frame_repeats = [start_times]
     for i in range(1, n_loops):
@@ -180,8 +188,8 @@ def create_centered_quad(
         # We must consider window aspect ratio, and stimulus mirror and rotation.
         # Determine scaling factors based on aspect ratios
         # Scale from stimulus pixels to NDC space (-1 to 1)
-        x_scale = 2 / win_width 
-        y_scale = 2 / win_height 
+        x_scale = 2 / win_width
+        y_scale = 2 / win_height
         mirror_transform = np.array(
             [
                 [-1 if mirror else 1, 0],
@@ -219,10 +227,8 @@ def create_centered_quad(
     xmax = np.max(quad[:, 0])
     ymin = np.min(quad[:, 1])
     ymax = np.max(quad[:, 1])
-    in_centered = (
-        math.isclose(xmin + xmax, 0.0, abs_tol=1e-6)
-        and math.isclose(ymin + ymax, 0.0, abs_tol=1e-6)
-
+    in_centered = math.isclose(xmin + xmax, 0.0, abs_tol=1e-6) and math.isclose(
+        ymin + ymax, 0.0, abs_tol=1e-6
     )
     assert in_centered, f"Quad is not centered at origin. {quad=}"
 
@@ -258,35 +264,135 @@ def spf_to_frame_times(spf, n_frames):
     return frame_times
 
 
-class StimArray:
-    """An array-based stimulus.
+def _expand_frame_durations(durs):
+    """View of frame durations with shape broadcastable with (N, F, H, W, C).
 
-    Currently, the main purpose is to encapsulate the serialization and deserialization.
+    Possible outputs:
+        - a scalar will produce (1, 1, 1, 1, 1)
+        - (F,) will produce (1, F, 1, 1, 1)
+        - (N, F) will produce (N, F, 1, 1, 1)
+
+    The leading 1s are not strictly needed but make things easier to reason about.
+
+    Static/class method so that it can be used to preview frame times from HDF5
+    files without needing to deserialize the full stimulus object.
     """
+    if np.ndim(durs) == 0:
+        durs = np.array([durs])
+    durs = durs.reshape(durs.shape + (1, 1, 1))  # add (..H, W, C) dims.
+    if durs.ndim == 4:
+        durs = einops.rearrange(durs, "f h w c -> 1 f h w c", h=1, w=1, c=1)
+    return durs
+
+
+def _frame_times(frame_durations, N, F):
+    """Get frame times, in seconds as a 1D array of shape (N*F,).
+
+    Returned array is float64, as float32 can hit precision issues for not
+    unreasonably long stimuli.
+
+    Static/class method so that it can be used to preview frame times from HDF5
+    files without needing to deserialize the full stimulus object.
+    """
+    durs = _expand_frame_durations(frame_durations)
+    durs = np.broadcast_to(durs, (N, F, 1, 1, 1))
+    durs = durs.flatten()
+    frame_times = np.concatenate([(0,), np.cumsum(durs, dtype=np.float64)])
+    assert len(frame_times) == N * F + 1, f"{len(frame_times)=}, expected {N*F+1}"
+    return frame_times
+
+
+class StimArray:
+    """The data of an array-based stimulus.
+
+    StimArray can be considered the datum of a TextureSequence stimulus program. The
+    main purpose of this class is to encapsulate serialization and deserialization.
+
+    The array data must try avoid using too much memory or disk space. The nature of
+    many stimuli, such as being full-field or monochrome, means that broadcasting can be
+    utilized to significantly reduce the number of array elements needed to represent a
+    stimuli.
+
+    There are two ways in which broadcasting takes effect:
+
+        1. Spatial and channel expansion. The H, W and C dimensions of the frames array
+            are broadcast to the H, W and C dimensions of a display window. This means
+            that full-field stimuli can be stored as (F, 1, 1, C) arrays, and monochrome
+            stimuli can be stored as (F, H, W, 1) arrays.
+        2. To be able to specify which LEDs to use with a monochrome stimuli, we add
+            added the `channel_mask` parameter. For example a [0, 1, 1, 0, 0] mask
+            would cause a (F, H, W, 1) stimulus to be broadcast to (F, H, W, 6), where
+            only the 2nd and 3rd channels are ever ON. There is more. The channel mask
+            has up to 3 dimensions, (N, F, C). The F dimension allows a channel mask to
+            be specified per frame, or broadcast across all frames if F=1. The N
+            dimension allows for multiple repeats of the frame array, each repeat using
+            a different channel mask. In theory, the (F, H, W, C) frames array is
+            broadcast to (N, F, H, W, C). The resulting stimulus can be thought of as
+
+                frames          x   channel_mask
+                (1, F, H, W, C) x (N, F, 1, 1, C) → (N, F, H, W, C)
+
+    The broadcasting allows simple numpy operations to reinflate a stimulus from the two
+    arrays, the frames and the channel mask. To keep this simplicity, there is no
+    support for having any separate gap between the repeats of the frames. If you wish
+    for there to be gaps, then this should be encoded in the frames array itself.
+
+    If you need more complexity, it might be worth considering making a new StimProgram
+    class and a new data class.
+
+    Note that the channels masked out by a channel_mask are off (0) and not say 50%
+    intensity. A separate parameter would be needed to support that.
+    """
+
+    _frames: np.ndarray
+    _frame_durations: np.ndarray | float
+    _triggers: np.ndarray | None
+    _channel_mask: np.ndarray | None
+    _label: str | None
+    metadata: dict
 
     def __init__(
         self,
-        frames,  # f, h, w, 1
-        frame_times: float | Sequence[float],
-        zoom,
-        triggers=None,
-        label=None,
-        metadata=None,
+        frames: np.ndarray,
+        frame_durations: npt.ArrayLike,
+        zoom: int,
+        triggers: npt.ArrayLike | None = None,
+        channel_mask: npt.ArrayLike | None = None,
+        label: str | None = None,
+        metadata: Dict[str, Any] | None = None,
     ):
         """
         Parameters
         ----------
         frames : np.ndarray
-            3D numpy array with shape (num_frames, height, width, channels).
-        triggers : np.ndarray, optional
-            1D numpy array of trigger times (in frame indices). If None, triggers
-        frame_times : float | Sequence[float]
-            Either a single float representing a shared frame duration (seconds), or a
-            sequence of frame times for each frame (seconds). If a sequence is provided,
-            its length must ben len(framems)+1, and the first element must be 0. The
-            last element represents the end time of the last frame.
+            4D numpy array with shape (num_frames, height, width, channels). If the
+            channel dimension is 1, the stimulus will be broadcast to all channels of
+            the display(s).
+        frame_durations : array_like
+            A single float will represent a shared frame duration (seconds). A
+            (F,) array will specifies each frame duration. If there are any repeats
+            implied by the channel mask, (F,) is broadcasted to (N, F). Finally, you can
+            specify a full (N, F) array to specify the frame durations across all mask
+            repeats. Frame durations rather than frame times are used as the latter has
+            numerical precision issues. For example, if using float32, then the unit
+            in the last place by t=16384s (~4 1/2 hours) is 1/512, so that the minimum
+            distinguishable time difference is about 2ms. So for long stimuli, frame
+            times would become noticeably inaccurate.
         zoom: int >= 1
             Zoom factor for displaying the stimulus.
+        triggers : array_like, optional
+            A 1D list/array with (F,) effective shape. The elements should be integers
+            corresponding to frame indices. If None, trigger on every frame. Triggers
+            will be the same for any repeat implied by the channel_mask.
+        channel_mask : np.ndarray, optional
+            An optional  boolean array of shape (C,) or (F, C) or (N, F, C) indicating
+            which channels to use. Masked out channels (mask=0) will be set to zero when
+            displayed. The F dimension corresponds to frames, and if F=1, it will be
+            broadcast across all frames. The N dimension corresponds to repeats of the
+            whole frame array, and allows for different channel masks to be applied in
+            succession. If channel_mask is None, no mask is applied. For broadcasting
+            purposes, (N, F, C) is effectively (N, F, 1, 1, C), such that the mask is
+            applied uniformly across all HxW pixels.
         label : str, optional
             An optional label for the stimulus.
         metadata : dict, optional
@@ -295,96 +401,222 @@ class StimArray:
             The metadata should be a non-nested dictionary with key-value pairs
             that are serializable with hdf5.
         """
-        if frames.ndim != 4:
-            raise ValueError(f"Expected shape (f, h, w, c). Got {frames.shape=}.")
-        self.frames = frames
-        self._set_frame_times(frame_times)
-        if zoom < 1:
-            raise ValueError(f"Zoom must be >= 1. Got {zoom=}.")
-        #  check not integer
-        if int(zoom) != zoom:
-            raise ValueError(f"Zoom must be integer. Got {zoom=}.")
+        self._frames = np.asarray(frames)
+        self._frame_durations = np.asarray(frame_durations)
+        # Reduce to scalar if possible, so that there is more certainty about the type.
+        if np.size(self._frame_durations) == 1:
+            self._frame_durations = self._frame_durations.item()
         self.zoom = int(zoom)
-        if triggers is not None:
-            if triggers.ndim != 1:
-                raise ValueError(f"Expected 1D triggers. Got {triggers.shape=}.")
-            if len(triggers) == 0:
+        self._triggers = np.asarray(triggers) if triggers is not None else None
+        self._channel_mask = (
+            np.asarray(channel_mask) if channel_mask is not None else None
+        )
+        self.label = label
+        self.metadata = metadata if metadata is not None else {}
+        self._validate_state()
+
+    def _validate_state(self):
+        """Raise a ValueError if there object state is found to be invalid."""
+        if self._frames.ndim != 4:
+            raise ValueError(f"Expected shape (f, h, w, c). {self._frames.shape=}.")
+        if self.zoom < 1:
+            raise ValueError(f"Zoom must be >= 1. {self.zoom=}.")
+        if int(self.zoom) != self.zoom:
+            raise ValueError(f"Zoom must be integer. {self.zoom=}.")
+        if self._triggers is not None:
+            if self._triggers.ndim != 1:
+                raise ValueError(f"Expected 1D triggers. {self._triggers.shape=}.")
+            if len(self._triggers) == 0:
                 # Defensive. Having empty arrays is error prone as testing triggers!=None
                 # doesn't guarantee we have triggers.
                 raise ValueError("Triggers cannot be empty array. Use None instead.")
-        self._triggers = triggers
-        self.label = label
-        self.metadata = metadata if metadata is not None else {}
+            is_sorted = np.all(self._triggers[:-1] <= self._triggers[1:])
+            if not is_sorted:
+                raise ValueError(f"Triggers must be sorted. {self._triggers=}.")
+            if self._triggers[0] < 0:
+                raise ValueError(f"Triggers must be non-negative. {self._triggers=}.")
+            if self._triggers[-1] >= len(self._frames):
+                raise ValueError(
+                    f"Triggers must be less than number of frames. {self._triggers=}, "
+                    f"{len(self._frames)=}."
+                )
+        if self._channel_mask is not None:
+            if self._channel_mask.ndim > 3 or self._channel_mask.ndim == 0:
+                raise ValueError(
+                    f"Expected channel_mask with 1, 2 or 3 dims. "
+                    f"{self._channel_mask.shape=}"
+                )
+            elif self._channel_mask.ndim in (2, 3):
+                if self._channel_mask.shape[-2] not in (1, len(self._frames)):
+                    raise ValueError(
+                        f"Expected channel_mask with F={len(self._frames)} or F=1. Got "
+                        f"{self._channel_mask.shape=}"
+                    )
+        if not np.ndim(self._frame_durations) in (0, 1, 2):
+            raise ValueError(
+                f"Expected frame_durations to be a 0, 1 or 2D. "
+                f"{self._frame_durations=}, {np.shape(self._frame_durations)=}"
+            )
 
-    def __len__(self):
-        return len(self.frames)
+        durs = _expand_frame_durations(self._frame_durations)
+        try:
+            np.broadcast_shapes(durs.shape, self.shape)
+        except ValueError as e:
+            raise ValueError(
+                f"Frame durations ({np.shape(self._frame_durations)}) is not "
+                f" broadcastable to stimulus shape ({self.shape})."
+            ) from e
+
+    def _frame_durations_is_scalar(self):
+        """Return True if frame_times is a single float (fps)."""
+        res = np.ndim(self._frame_durations) == 0
+        return res
+
+    @property
+    def shape(self):
+        res = np.broadcast_shapes(self._frames.shape, self.channel_mask().shape)
+        assert len(res) == 5, f"Expected (N, F, H, W, C). Got {res=}"
+        return res
+
+    def broadcasted_view(self):
+        """Get frames as shape (N, F, H, W, C) and channel mask as shape (N, F, 1, 1, C).
+
+        This does not create new arrays.
+        """
+        assert self._frames.ndim == 4
+        F1, H, W, C1 = self._frames.shape
+        channel_mask = self.channel_mask()
+        N, F2, _, _, C2 = channel_mask.shape
+        # The frames dimension decides F, and the channel mask decides C.
+        assert F2 == 1 or F2 == F1, f"Frame dim is incompatible. {F1=}, {F2=}"
+        assert C1 == 1 or C1 == C2, f"Channel dim is incompatible. {C1=}, {C2=}"
+        C = C2
+        F = F1
+        # This is not needed, as leading 1s will be added automatically.
+        # frames = einops.rearrange(
+        #     self._frames, "f h w c -> 1 f h w c", f=F, h=H, w=W, c=C1
+        # )
+        frames = np.broadcast_to(self._frames, (N, F, H, W, C))
+        channel_mask = np.broadcast_to(channel_mask, (N, F, 1, 1, C))
+        return frames, channel_mask
+
+    def frame_at(self, frame_idx):
+        """Index into the stimulus as an (N x F, H, W, C) array."""
+        frames, channel_mask = self.broadcasted_view()
+        frame = einops.rearrange(frames, "n f h w c -> (n f) h w c")[frame_idx]
+        mask = einops.rearrange(channel_mask, "n f 1 1 c -> (n f) 1 1 c")[frame_idx]
+        masked_frame = frame * mask
+        return masked_frame
+
+    def masked_frames(self):
+        """Apply channel mask to frames, resulting in an (N, F, H, W, C) array.
+
+        This will create a new array, possibly a very large one. Use broadcasted_view()
+        if you would prefer to work with the frames and channel_mask as views of
+        shape (N, F, H, W, C) and (N, F, 1, 1, C) respectively, which, under the hood,
+        are much smaller arrays, possibly as small as (F, H, W, 1) and (C,).
+        """
+        frames, channel_mask = self.broadcasted_view()
+        masked_frames = frames * channel_mask
+        assert masked_frames.ndim == 5, f"{masked_frames.shape=}"
+        return masked_frames
 
     @property
     def height(self):
-        return self.frames.shape[1]
+        return self._frames.shape[1]
 
     @property
     def width(self):
-        return self.frames.shape[2]
+        return self._frames.shape[2]
 
     @property
     def n_channels(self):
-        nch = self.frames.shape[3]
+        """The number of channels of the frames array."""
+        nch = self._frames.shape[3]
         return nch
 
-    def _set_frame_times(self, frame_times):
-        self._frame_times = frame_times
-        if not self._frame_times_is_scalar():
-            # Validate length
-            if not len(self.frame_times()) == len(self.frames) + 1:
-                raise ValueError(
-                    f"Expected len(frame_times) == len(frames)+1. "
-                    f"Got {len(self.frame_times())=}, {len(self.frames)=}."
-                )
-            # Convert to numpy array
-            self._frame_times = np.asarray(self._frame_times, dtype=np.float64)
+    def channel_mask(self) -> np.ndarray:
+        """The effective channel mask after broadcasting.
 
-    def _frame_times_is_scalar(self):
-        """Return True if frame_times is a single float (fps)."""
-        res = np.ndim(self._frame_times) == 0
-        return res
+        We need to insert (1,1) for the (H, W) dimensions. As they are in the middle,
+        we can't rely on broadcasting to implicitly map the dimensions. If we stored
+        everything as channel first, then we could just rely on broadcasting.
+        """
+        if self._channel_mask is None:
+            mask = np.ones((1, 1, 1, 1, self.n_channels), dtype=bool)
+        elif self._channel_mask.ndim == 1:
+            mask = einops.rearrange(self._channel_mask, "c -> 1 1 1 1 c")
+        elif self._channel_mask.ndim == 2:
+            mask = einops.rearrange(self._channel_mask, "f c -> 1 f 1 1 c")
+        elif self._channel_mask.ndim == 3:
+            mask = einops.rearrange(self._channel_mask, "n f c -> n f 1 1 c")
+        else:
+            assert False, f"{self._channel_mask.shape=}"
+        return mask
+
+    def n_mask_repeats(self):
+        """The number of repeats of the frames array implied by the channel mask."""
+        N, F, H, W, C = self.channel_mask().shape
+        return N
+
+    def total_frames(self):
+        """The total number of frames, accounting for channel mask repeats."""
+        if self._channel_mask is None:
+            n_frames = len(self._frames)
+        else:
+            n_frames = self.n_mask_repeats() * len(self._frames)
+        return n_frames
 
     def fps(self, allow_estimate: bool):
-        """Return the stimulus fps, if frame times are evenly spaced, None otherwise."""
+        """Return the stimulus fps (possibly estimated), or None if not fixed.
+
+        Frames have fixed fps if frame_durations is a scalar. Frames _might_ have a
+        fixed fps if frame_durations is an array with equal elements.
+
+        None is returned if there isn't a fixed fps (non-scalar or allow_estimate=True
+        but unequal frame durations).
+        """
         res = None
-        if self._frame_times_is_scalar():
-            res = 1.0 / self._frame_times
+        if self._frame_durations_is_scalar():
+            res = 1.0 / self._frame_durations
         else:
             if allow_estimate:
                 # Are all frame times evenly spaced?
-                diffs = np.diff(self._frame_times)
-                if np.allclose(diffs, diffs[0]):
-                    res = 1.0 / diffs[0]
+                dur0 = self._frame_durations[0]
+                atol = 1e-4  # 100 microseconds.
+                if np.allclose(self._frame_durations, dur0, rtol=0, atol=atol):
+                    res = 1.0 / dur0
         return res
 
     def frame_times(self) -> np.ndarray:
-        if self._frame_times_is_scalar():
-            spf = self._frame_times
-            res = spf_to_frame_times(spf, len(self.frames))
-        else:
-            res = self._frame_times
-        return res
+        """Get frame times, in seconds as a 1D array of shape (N*F,).
+
+        Returned array is float64, as float32 can hit precision issues for not
+        unreasonably long stimuli.
+        """
+        N, F, _, _, _ = self.shape
+        frame_times = _frame_times(self._frame_durations, N, F)
+        return frame_times
 
     def frame_start_times(self) -> np.ndarray:
         start_and_final = self.frame_times()
         return start_and_final[:-1]
 
     def triggers(self):
+        """Get triggers as a 1D array of shape (N*F,)."""
+        N, F, _, _, _ = self.shape
         if self._triggers is None:
-            triggers = np.arange(len(self.frames), dtype=np.uint64)
+            triggers = np.arange(len(self._frames), dtype=np.uint64)
         else:
             triggers = self._triggers
+        assert triggers.ndim == 1, f"Only supports (F,) arrays {triggers.shape=}"
+        triggers = loop_triggers(triggers, F, N)
         return triggers
 
     def __repr__(self):
         tr_str = f"len(triggers)={len(self._triggers)}" if self._triggers else "None"
         return (
-            f"Stim(shape(frames)={self.frames.shape}, "
+            f"Stim(shape(frames)={self._frames.shape}, "
             f"fps={self.fps(allow_estimate=True):.3f}, {tr_str}, "
             f"zoom={self.zoom}, label={self.label}, metadata={self.metadata.__repr__()}"
         )
@@ -402,15 +634,18 @@ class StimArray:
         Stim
             A new Stim object with only the specified channels.
         """
-        # If not always 4 dim, then use:
-        # new_frames = self.frames[..., channels]
-        print(self.frames.shape)
-        new_frames = self.frames[:, :, :, channels]
+        assert self._frames.ndim == 4, f"{self._frames.shape=}"
+        new_frames = self._frames[:, :, :, channels]
+        if self._channel_mask is None:
+            new_channel_mask = None
+        else:
+            new_channel_mask = self._channel_mask[..., channels]
         return StimArray(
             frames=new_frames,
-            frame_times=self._frame_times,
+            frame_durations=self._frame_durations,
             zoom=self.zoom,
             triggers=self._triggers,
+            channel_mask=new_channel_mask,
             label=self.label,
             metadata=self.metadata,
         )
@@ -494,10 +729,10 @@ def _write_hdf5_v1(stim: StimArray, f, dataset_opts):
         res = copy.deepcopy(dataset_opts)
         # The last check covers isinstance(arr, h5py.Empty):
         if np.isscalar(arr) or arr.size == 0 or arr.shape is None:
-            del res["compression"]
-            del res["chunks"]
-            del res["shuffle"]
-            del res["compression_opts"]
+            res.pop("compression", None)
+            res.pop("chunks", None)
+            res.pop("shuffle", None)
+            res.pop("compression_opts", None)
         return res
 
     f.attrs["format_version"] = "1"
@@ -506,23 +741,33 @@ def _write_hdf5_v1(stim: StimArray, f, dataset_opts):
         triggers = h5py.Empty("f")
     else:
         triggers = stim._triggers
+    if stim._channel_mask is None:
+        channel_mask = h5py.Empty("f")
+    else:
+        channel_mask = stim._channel_mask
     f.attrs["zoom"] = stim.zoom
     f.attrs["label"] = label
     f.create_dataset(
         "triggers", data=triggers, dtype="uint64", **filter_opts(triggers, dataset_opts)
     )
     f.create_dataset(
-        "frames",
-        data=stim.frames,
+        "channel_mask",
+        data=channel_mask,
         dtype="uint8",
-        **filter_opts(stim.frames, dataset_opts),
+        **filter_opts(channel_mask, dataset_opts),
+    )
+    f.create_dataset(
+        "frames",
+        data=stim._frames,
+        dtype="uint8",
+        **filter_opts(stim._frames, dataset_opts),
     )
     # HDF5 supports 0-dim datasets, so we can store the float|Sequence[float] directly.
     f.create_dataset(
-        "frame_times",
-        data=stim._frame_times,
+        "frame_durations",
+        data=stim._frame_durations,
         dtype="float64",
-        **filter_opts(stim._frame_times, dataset_opts),
+        **filter_opts(stim._frame_durations, dataset_opts),
     )
 
     # Always create metadata group and store attributes
@@ -573,8 +818,9 @@ def _read_hdf5_v1(f):
         _logger.warning(f"Expected format version 1, got {ver}")
     zoom = _get_attr(f, "zoom", default=1)
     frames = f["frames"][()]
-    frame_times = f["frame_times"][()]
+    frame_durations = f["frame_durations"][()]
     triggers = get_dataset(f, "triggers", default=None)
+    channel_mask = get_dataset(f, "channel_mask", default=None)
     label = _get_attr(f, "label")
     metadata = dict(f["metadata"])
     if frames.dtype != np.uint8:
@@ -585,9 +831,10 @@ def _read_hdf5_v1(f):
 
     return StimArray(
         frames=frames,
-        frame_times=frame_times,
+        frame_durations=frame_durations,
         zoom=zoom,
         triggers=triggers,
+        channel_mask=channel_mask,
         label=label,
         metadata=metadata,
     )
@@ -607,7 +854,7 @@ def _read_hdf5_v0(f):
     print(stim.shape)
     frame_duration = 1.0 / frame_rate
     res = StimArray(
-        frames=stim, frame_times=frame_duration, zoom=1, triggers=None, label=None
+        frames=stim, frame_durations=frame_duration, zoom=1, triggers=None, label=None
     )
     return res
 
@@ -633,7 +880,7 @@ def _preview_hdf5_v0(f):
 def _preview_hdf5_v1(f):
     """Preview the v1."""
     # Convention is to always have 4 dims.
-    n_frames, h, w, c = f["frames"][:].shape
+    N, F, H, W, C = stim_shape_from_hdf5_v1(f)
     triggers = f.get("triggers", None)
     # "triggers" can be missing, or point to dataset or h5py.Empty.
     if triggers is None:
@@ -644,28 +891,30 @@ def _preview_hdf5_v1(f):
         # won't catch that case.
         n_triggers = 0
     else:
-        print(triggers)
         n_triggers = triggers.shape[0]
+    channel_mask = f.get("channel_mask", None)
+    channel_mask_shape = channel_mask.shape if channel_mask is not None else None
     zoom = _get_attr(f, "zoom", default=1)
     metadata = dict(f["metadata"])
-    if f["frame_times"].ndim == 0:
-        spf = f["frame_times"][()]
+    frame_times = frame_times_from_hdf5_v1(f)
+    duration = frame_times[-1]
+    if f["frame_durations"].ndim == 0:
+        spf = f["frame_durations"][()]
         fps = 1.0 / spf
-        duration = n_frames * spf
     else:
-        assert f["frame_times"].ndim == 1
-        frame_times = f["frame_times"][()]
-        duration = frame_times[-1]
         fps = None
 
     return {
-        "n_frames": n_frames,
+        "n_frames": F,
+        "n_mask_repeats": N,
+        "n_total_frames": N * F,
         "n_triggers": n_triggers,
+        "channel_mask.shape": channel_mask_shape,
         "fps": fps,
         "duration": duration,  # seconds
-        "height": h,
-        "width": w,
-        "channels": c,
+        "height": H,
+        "width": W,
+        "channels": C,
         "zoom": zoom,
         "metadata": metadata,
     }
@@ -680,19 +929,27 @@ def frame_times_from_hdf5_v0(f) -> np.ndarray:
     return frame_times
 
 
+def stim_shape_from_hdf5_v1(f) -> Tuple[int, int, int, int, int]:
+    """Get stimulus shape from v1 format HDF5 file."""
+    F, H, W, C = f["frames"][:].shape
+    channel_mask = f.get("channel_mask", None)
+    if channel_mask is not None and channel_mask.ndim == 3:
+        N = channel_mask.shape[0]
+    else:
+        N = 1 
+    return N, F, H, W, C
+
+
 def frame_times_from_hdf5_v1(f) -> np.ndarray:
     """Get frame times from v1 format HDF5 file."""
-    frame_times = f["frame_times"]
-    if frame_times.ndim not in (0, 1):
+    frame_durations = f["frame_durations"]
+    if frame_durations.ndim not in (0, 1, 2):
         raise ValueError(
-            f"Expected frame_times to be 0D or 1D. Got {frame_times.ndim}D."
+            f"Expected frame_durations to be 0D, 1D or 2D. ({frame_durations.ndim=})"
         )
-    if frame_times.ndim == 0:
-        spf = frame_times[()]
-        n_frames = f["frames"].shape[0]
-        frame_times = spf_to_frame_times(spf, n_frames)
-    else:
-        frame_times = frame_times[()]
+    N, F, H, W, C = stim_shape_from_hdf5_v1(f)
+    frame_durations = frame_durations[()]
+    frame_times = _frame_times(frame_durations, N, F)
     return frame_times
 
 
@@ -771,8 +1028,16 @@ def from_script(module_path: Path, config: Optional[str]) -> StimProgram:
         * to_program(config: Optional[str]) -> StimProgram
         * default_config() -> str     [optional function, for display in GUI]
 
-    It's totally up to the script how to interpret the config string. JSON makes sense
-    for many cases.
+    Instead of having to serialize your stimulus to a StimArray as a hdf5 file, you can
+    instead define a script programmatically, which serves each frame on demand.
+    See examples/resources/example_program.py for an example of how to write such a
+    script. Writing a program this way can save a lot of disk space, and it can allow
+    you to leverage OpenGL for the stimulus generation. Moving bars is an example where
+    the OpenGL shader is relatively easy, but to create numpy arrays by hand is harder
+    due to having to manually account for aliasing and partially covered pixels.
+
+    It's up to the script how to interpret the config string. JSON makes sense for many
+    cases.
     """
     module_path = Path(module_path)
 
@@ -843,16 +1108,21 @@ class TextureSequence(StimProgram):
             rotation = 0
 
         # Load textures
-        F, H, W, C = self.stim_arr.frames.shape
+        N, F, H, W, C = self.stim_arr.shape
+        frames, channel_mask = self.stim_arr.broadcasted_view()
         if not self.lazy_textures:
+            # Create textures for all frames.
             self.textures = []
-            for i in range(F):
-                tex = ctx.texture(
-                    (W, H), C, self.stim_arr.frames[i].tobytes(), samples=0, alignment=1
-                )
-                # No filtering. Expect aliasing.
-                tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
-                self.textures.append(tex)
+            for n in range(N):
+                for i in range(F):
+                    masked_frame = frames[n, i] * channel_mask[n, i]
+                    tex = ctx.texture(
+                        (W, H), C, masked_frame.tobytes(), samples=0, alignment=1
+                    )
+                    # No filtering. Expect aliasing.
+                    tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
+                    self.textures.append(tex)
+            assert len(self.textures) == N * F, f"{N=}, {F=}, {len(self.textures)=}"
         # Compile program and load vertices.
         self._program = self._compile_program(ctx)
         zoom = self.stim_arr.zoom
@@ -884,15 +1154,15 @@ class TextureSequence(StimProgram):
         """
         # TODO: zoom!
         if self.lazy_textures:
-            F, H, W, C = self.stim_arr.frames.shape
+            N, F, H, W, C = self.stim_arr.shape
             # Create texture on demand.
-            assert frame_idx < len(self.stim_arr)
+            assert frame_idx < N * F, f"Index out of bounds. {frame_idx=}, {N=}, {F=}"
             if self.single_tex is not None:
                 self.single_tex.release()
             self.single_tex = ctx.texture(
                 (W, H),
                 C,
-                self.stim_arr.frames[frame_idx].tobytes(),
+                self.stim_arr.frame_at(frame_idx).tobytes(),
                 samples=0,
                 alignment=1,
             )
