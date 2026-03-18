@@ -42,9 +42,25 @@ poetry install
 
 Tested with Python 3.10. You may need `poetry env use python3.10`.
 
+## Running programs
+You can run entrypoints using poetry, like:
+
+```bash
+poetry run <entrypoint-name> [args]
+```
+
+where `<entrypoint-name>` is one of the entrypoints defined in `pyproject.toml`. Or, you can source the environment and then run scripts directly with Python:
+
+```bash
+eval (poetry env activate)
+python ./path/to/script.py [args]
+```
+
+The entrypoints defined in `pyproject.toml` map to functions in a module, which allows for multiple entrypoints to be defined in a single module. Running such a module with `python ./path/to/module.py` will simply run the module as a script, and may not run the same function as an entrypoint. 
+
+
 ## Running the GUI
-To run the GUI, with optional config path, run the following command in the
-terminal:
+To run the GUI, with optional config path, run the following command in the terminal:
 
 ```bash
 poetry run fpspy-gui [config-path]
@@ -196,7 +212,9 @@ The noise can be created using the parameters "checkerboard size", "window size"
 You can enter the name of the noise file into the field left to the "Generate Noise" button. This file will be stored in /stimuli folder. If you want to have shuffled noise, you can check the "Shuffle" box. The shuffle logic is shuffle every frame and shuffle 4 positions in x and y, resulting in 16 different positions in total. The "Estimated size" text shows the estimated size of the noise file. 
 
 ## 3Brain specific
-It would be nice to have the fpspy package offer a core set of features, and all of the setup specific stuff to be auxillary. I started moving 3Brain specific features to the `examples` folder.
+It would be nice to have the fpspy package offer a core set of features, and
+all of the setup specific stuff to be auxillary. I started moving 3Brain
+specific features to the `examples` folder.
 
 Here there is:
 
@@ -209,11 +227,75 @@ Here there is:
 ![Noise](images/noise.PNG)
 
 # Future work:
-    - Combine reduce play.py and play_3brain.py to a single play.py. Same for the two mains. When doing this, consider the next point.
-    - I think the project could benefit from being reduced to a core set of functionality, while the rest moves into an examples folder. The project should shine in how minimal and simple to understand it is.
     - Move the stimulus generation code (checkerboard noise etc) into a separate package, or at least a separate submodule.
     - Implement colour noise (this is already in the shaders, just needs to be updated in the play_noise.py script)
     - Implement fullscreen on secondary monitor (this is a bug in moderngl_window)
     - Expand so single boxes can be shown and moved around (experimental feature, look at the "moving_box.py" script)
     - Better exception handling
+
+
+# Design notes
+
+## Simplifying the codebase
+If the project is to be more widely used, it would benefit from being reduced to a small core set of modules. The 3brain specific code has already been moved out into the `examples` folder, such as `examples/gui_cal_3brain.py`. It would be good to move out the other setup specific code, such as `src/fpspy/main.py`, so that the core package is just the reusable components. Furthermore, the stimulus generation code could also be moved out into a separate package, and probably the `arduino.py` module too.
+
+
+## Interfaces
+
+### StimProgram
+A StimProgram offers a render(ctx, frame_idx) method. This will be called by each presenter on each frame. The StimProgram is responsible for setting screen pixel values by making OpenGL calls. There are currently 3 ways to create a StimProgram:
+
+    1. Instantiate an TextureSequence object. This class takes in an array of 
+    shape (frames, height, width, channels) and handles rendering each frame as 
+    a texture. The TextureSequence is currently the primary way to create 
+    stimuli. StimArray and Presentation are used with TextureSequence.
+    2. Instantiate a ProceduralShader object. This class takes a fragment shader
+    as input, and delegates to it. 
+    3. call stim.py::from_script(path) to load a Python module that can create
+    a StimProgram. This is the most flexible approach. These python modules 
+    can be considered data files in the same sense that an exported stimulus
+    array is a data file for a stimulus.
+
+
+### StimArray
+StimArray plugs into a TextureSequence program. It serializes and deserializes the information needed to render a stimulus from a (T, H, W, C) array. For example, on what frames in [0, T) should a trigger be sent on? How many frames per second? Options like "zoom" allow a stimulus to be saved more compactly. Broadcasting of the channel dimension also reduces the array size for monochrome stimuli.
+  
+
+## Channel mask
+I think that a channel mask should be allowed to be specified in combination with a stimulus array, and that the combination of these two pieces of information should be required to know what was presented. This would imply that the stimulus array alone is not enough to record the stimulus presented. 
+
+This will significantly reduce the storage space required for stimuli, and reduce the save and load times stimuli, as many stimuli share the same grayscale data but differ in terms of which LEDs are used.
+
+A half-way solution is to allow a channel mask to be specified in a StimArray; however, this would still mean that the grayscale pattern needs to be duplicated an a (T, H, W, 1) array for each channel mask pattern. This would save having to save (T, H, W, C) arrays for each pattern, which is an improvement, but the fact that there is still duplication suggests that the channel mask does not belong in the StimArray.
+
+A further step worth taking is to accommodate a separation between stimulus data and presentation parameters. Currently, the StimArray alone is enough to know what was presented; however, making it so that StimArray+presentation_params are needed would allow a single (T, H, W, 1) StimArray file to be used for all combinations of channel masks. 
+
+How to allow the specification of the channel masks ahead of time, and saving them so that stimuli can be easily replayed from self-contained files? We may not want a "Presentation" file that has a file pointer to a StimArray file. Instead, the Presentation file should contain all information, including the stimulus data. The solution might be more graceful if it naturally becomes supported by allowing for stimuli lists (play these X stimuli in this order, with these gaps between). Such a feature could have a channel mask. What is the dataum? I guess there would be an array of StimArrays, and a list like [0, 0, 0, 1, 1, 1, 2, 2, 3, 4, 5] would index into the array of stimuli to specify the order of presentation. Such an index list could be accompanied by a list of channel masks. The channel masks would be a presentation parameter, of which there could be various (such as speed or intensity). I think it would be important to be able to render a Presentation back into a single StimArray, as the StimArray should be able to represent any stimuli. This may be an unrealistic goal, as there are likely presentation options, like lightcrafter options or electrically tunable lens settings, that can't be represented by modifying the stimulus array, and instead are records of how some aspect of the light path is to be modified. Although, it's conceivable that ETL settings may with to be controlled per-frame, with associated trigger values, so really, it's not clear where we will end up with StimArray as being enough to replicate a stimulus presentation.
+
+
+## Stimulus chaining and looping
+It would be nice to be able to run:
+
+```bash
+main_3brain.py stimulus1.h5 stimulus2.py stimulus3.h5
+```
+
+Each of these stimuli would be invoked by sequential queuing of play commands that would pass the stimulus path to each presenter. It is worth considering whether or not the following would be sufficient:
+
+```bash
+main_3brain.py stimulus1.h5
+main_3brain.py stimulus2.py
+main_3brain.py stimulus3.h5
+```
+or, using the already supported delay to add a time gap between stimuli:
+
+```bash
+main_3brain.py --delay 5 stimulus1.h5
+main_3brain.py --delay 5 stimulus2.py
+main_3brain.py --delay 5 stimulus3.h5
+```
+
+If the script based approach is reasonable, then whatever functionality we add to support the related need to run different channel masks for a single monochrome stimulus, it doesn't need to operate on the level of StimPrograms, but instead only needs to support the TextureSequence program. This is good in the sense that we don't need to make the high-level StimProgram interface any more complex. If StimArray's purpose is to be a self-contained record of a what a TextureSequence program should present, then this line of reasoning suggests that the channel mask properties should belong in a StimArray, rather than being a separate Presenter parameter that is passed concurrently with the StimArray.
+
+
 
