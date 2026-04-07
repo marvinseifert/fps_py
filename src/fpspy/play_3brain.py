@@ -131,7 +131,7 @@ class Presenter:
 
         config
         ------
-        Dictionary containing the configuration parameters for the window.
+        Dictionary containing the configuration parameters for one or more windows.
 
         An example showing the expected structure:
         {
@@ -744,6 +744,22 @@ def export(prog: stim.StimProgram, config):
         label="exported_stimulus",
     )
     return out_stim
+
+
+def validate_stim(stim_path, stim_config) -> bool:
+    """Run checks on the stimulus before sending to presenter processes.
+
+    Currently, it's just loading the program.
+
+    Returns False on sucess, True on error.
+    """
+    try:
+        prog = stim.create_program(stim_path, stim_config)
+    except Exception as e:
+        _logger.error(f"Failed to load stimulus program:\n{e}")
+        #print(f"Failed to load stimulus program:\n{e}")
+        return True
+    return False
 
 
 def start_presenter_processes(config, out_dir, delay, enable_triggers, log_level):

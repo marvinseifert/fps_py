@@ -829,6 +829,10 @@ def cal_gui(
         raise typer.Exit(1)
 
     config = fpspy.config.load_config(config_path)
+    is_err = fpspy.play_3brain.validate_stim(stim_path, config)
+    if is_err:
+        raise typer.Exit(1)
+
     if out_dir is None:
         out_dir = fpspy.config.create_outdir(config)
     out_dir.mkdir(parents=False, exist_ok=True)
