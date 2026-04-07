@@ -319,21 +319,21 @@ class StimArray:
             are broadcast to the H, W and C dimensions of a display window. This means
             that full-field stimuli can be stored as (F, 1, 1, C) arrays, and monochrome
             stimuli can be stored as (F, H, W, 1) arrays.
-        2. To be able to specify which LEDs to use with a monochrome stimuli, we add
-            added the `channel_mask` parameter. For example a [0, 1, 1, 0, 0] mask
-            would cause a (F, H, W, 1) stimulus to be broadcast to (F, H, W, 6), where
-            only the 2nd and 3rd channels are ever ON. There is more. The channel mask
-            has up to 3 dimensions, (N, F, C). The F dimension allows a channel mask to
-            be specified per frame, or broadcast across all frames if F=1. The N
-            dimension allows for multiple repeats of the frame array, each repeat using
-            a different channel mask. In theory, the (F, H, W, C) frames array is
-            broadcast to (N, F, H, W, C). The resulting stimulus can be thought of as
+        2. To be able to specify which LEDs to use with a monochrome stimuli, we use
+            the `channel_mask` parameter. For example a [0, 1, 1, 0, 0] mask would cause
+            a (F, H, W, 1) stimulus to be broadcast to (F, H, W, 6), where only the 2nd
+            and 3rd channels are ever ON. There is more. The channel mask has up to 3
+            dimensions, (N, F, C). The F dimension allows a channel mask to be specified
+            per frame, or broadcast across all frames if F=1. The N dimension allows for
+            multiple repeats of the frame array, each repeat using a different channel
+            mask. In theory, the (F, H, W, C) frames array is broadcast to (N, F, H, W,
+            C). The resulting stimulus can be thought of as
 
                 frames          x   channel_mask
                 (1, F, H, W, C) x (N, F, 1, 1, C) → (N, F, H, W, C)
 
     The broadcasting allows simple numpy operations to reinflate a stimulus from the two
-    arrays, the frames and the channel mask. To keep this simplicity, there is no
+    arrays—the frames and the channel mask. To keep this simplicity, there is no
     support for having any separate gap between the repeats of the frames. If you wish
     for there to be gaps, then this should be encoded in the frames array itself.
 
@@ -635,11 +635,26 @@ class StimArray:
             A new Stim object with only the specified channels.
         """
         assert self._frames.ndim == 4, f"{self._frames.shape=}"
-        new_frames = self._frames[:, :, :, channels]
-        if self._channel_mask is None:
-            new_channel_mask = None
+        F, H, W, C = self._frames.shape
+        has_mask = self._channel_mask is not None
+        new_channel_mask = self._channel_mask[..., channels] if has_mask else None
+        # If frames has shape (F, H, W, 1) (i.e. c=1), then it is monochrome and the
+        # channel mask will inflate this and determine which channels are available.
+        if C == 1:
+            # requesting_only_ch0 = np.array(channels).unique().tolist() == [0]
+            requesting_only_ch0 = set(channels) == {0} 
+            if not has_mask and not requesting_only_ch0:
+                raise ValueError(
+                    f"Frames has shape {self._frames.shape}, but requesting channels "
+                    "{channels}."
+                )
+            # Frames is copied as-is.
+            new_frames = self._frames.copy()
         else:
-            new_channel_mask = self._channel_mask[..., channels]
+            # This covers two cases:
+            # 1. channel_mask is None (what we anticipate as being most common)
+            # 2. There is also a channel_mask. This is supported, but may be niche. 
+            new_frames = self._frames[:, :, :, channels]
         return StimArray(
             frames=new_frames,
             frame_durations=self._frame_durations,
@@ -936,7 +951,7 @@ def stim_shape_from_hdf5_v1(f) -> Tuple[int, int, int, int, int]:
     if channel_mask is not None and channel_mask.ndim == 3:
         N = channel_mask.shape[0]
     else:
-        N = 1 
+        N = 1
     return N, F, H, W, C
 
 
