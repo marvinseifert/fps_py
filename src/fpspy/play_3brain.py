@@ -319,10 +319,12 @@ class Presenter:
     def _load(self, stim_path, stim_config, loops, t0, speed):
         """Load a stimuli; shared by load() and play()."""
         prog = stim.create_program(stim_path, stim_config)
+        _logger.info(f"[start] program setup")
         s_frames, triggers = prog.setup(
             self.window.ctx, *self.window.size, self.c_channels,
             self.mirror, self.rotation, self.process_idx
         )
+        _logger.info(f"[end] program setup")
         # The presenter can delay and loop a stimulus.
         s_frames = s_frames * speed + t0
         frame_idxs, s_frames, triggers = fpspy.stim.loop(s_frames, triggers, loops)

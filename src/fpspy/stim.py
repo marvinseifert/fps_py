@@ -517,7 +517,10 @@ class StimArray:
         are much smaller arrays, possibly as small as (F, H, W, 1) and (C,).
         """
         frames, channel_mask = self.broadcasted_view()
+        _logger.info(f"[start] Expanding frames with channel mask "
+            f"{frames.shape} x {channel_mask.shape} -> {self.shape}")
         masked_frames = frames * channel_mask
+        _logger.info(f"[end] Expanding frames with channel mask")
         assert masked_frames.ndim == 5, f"{masked_frames.shape=}"
         return masked_frames
 
@@ -614,9 +617,11 @@ class StimArray:
         return triggers
 
     def __repr__(self):
-        tr_str = f"len(triggers)={len(self._triggers)}" if self._triggers else "None"
+        tr_str = (
+            "None" if self._triggers is None else f"len(triggers)={len(self._triggers)}"
+        )
         return (
-            f"Stim(shape(frames)={self._frames.shape}, "
+            f"StimArray(shape(frames)={self._frames.shape}, "
             f"fps={self.fps(allow_estimate=True):.3f}, {tr_str}, "
             f"zoom={self.zoom}, label={self.label}, metadata={self.metadata.__repr__()}"
         )

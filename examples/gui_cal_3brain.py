@@ -505,7 +505,8 @@ class CalibrationGui(QMainWindow):
             else:
                 self.update_status(f"Load failed: {response}")
         except Exception as e:
-            self.update_status(f"Load error: {e}")
+            self.update_status(f"Load error: {str(e)}")
+            _logger.error(f"Failed to load stimulus: {e}")
 
     def on_next(self):
         """Step to the next frame."""
