@@ -646,19 +646,18 @@ class StimArray:
         # If frames has shape (F, H, W, 1) (i.e. c=1), then it is monochrome and the
         # channel mask will inflate this and determine which channels are available.
         if C == 1:
-            # requesting_only_ch0 = np.array(channels).unique().tolist() == [0]
-            requesting_only_ch0 = set(channels) == {0} 
+            requesting_only_ch0 = set(channels) == {0}
             if not has_mask and not requesting_only_ch0:
                 raise ValueError(
                     f"Frames has shape {self._frames.shape}, but requesting channels "
                     "{channels}."
                 )
-            # Frames is copied as-is.
-            new_frames = self._frames.copy()
+            # Frames is used as-is.
+            new_frames = self._frames
         else:
             # This covers two cases:
             # 1. channel_mask is None (what we anticipate as being most common)
-            # 2. There is also a channel_mask. This is supported, but may be niche. 
+            # 2. There is also a channel_mask. This is supported, but may be niche.
             new_frames = self._frames[:, :, :, channels]
         return StimArray(
             frames=new_frames,
@@ -1122,26 +1121,35 @@ class TextureSequence(StimProgram):
 
         if channels is not None:
             self.stim_arr = self.stim_arr.with_channels(channels)
+            # now we just keep the whole thing, and index it correctly when needed.
+            pass
         if mirror is None:
             mirror = False
         if rotation is None:
             rotation = 0
 
         # Load textures
-        N, F, H, W, C = self.stim_arr.shape
-        frames, channel_mask = self.stim_arr.broadcasted_view()
+        N, F, H, W, C_all = self.stim_arr.shape
+        C = len(channels) if channels is not None else C_all
+        if C > 4:
+            raise ValueError(f"Too many channels requested. {C=}. Max for GLSL 4.")
         if not self.lazy_textures:
             # Create textures for all frames.
             self.textures = []
-            for n in range(N):
-                for i in range(F):
-                    masked_frame = frames[n, i] * channel_mask[n, i]
-                    tex = ctx.texture(
-                        (W, H), C, masked_frame.tobytes(), samples=0, alignment=1
-                    )
-                    # No filtering. Expect aliasing.
-                    tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
-                    self.textures.append(tex)
+            frames = einops.rearrange(
+                self.stim_arr.masked_frames(), "n f h w c -> (n f) h w c"
+            )
+            for i in range(F * N):
+                # masked_frame = self.stim_arr.frame_at(i)
+                masked_frame = frames[i]
+                assert masked_frame.shape == (H, W, C)
+                _logger.info(f"Load frame:\t {i} \t{masked_frame.shape=}")
+                tex = ctx.texture(
+                    (W, H), C, masked_frame.tobytes(), samples=0, alignment=1
+                )
+                # No filtering. Expect aliasing.
+                tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
+                self.textures.append(tex)
             assert len(self.textures) == N * F, f"{N=}, {F=}, {len(self.textures)=}"
         # Compile program and load vertices.
         self._program = self._compile_program(ctx)
@@ -1174,20 +1182,18 @@ class TextureSequence(StimProgram):
         """
         # TODO: zoom!
         if self.lazy_textures:
-            N, F, H, W, C = self.stim_arr.shape
-            # Create texture on demand.
+            N, F, H, W, C_all = self.stim_arr.shape
+            C = 3  # always RGB.
             assert frame_idx < N * F, f"Index out of bounds. {frame_idx=}, {N=}, {F=}"
-            if self.single_tex is not None:
-                self.single_tex.release()
-            self.single_tex = ctx.texture(
-                (W, H),
-                C,
-                self.stim_arr.frame_at(frame_idx).tobytes(),
-                samples=0,
-                alignment=1,
-            )
-            # No filtering. Expect aliasing.
-            self.single_tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
+            if self.single_tex is None:
+                self.single_tex = ctx.texture(
+                    (W, H),
+                    C,
+                    samples=0,
+                    alignment=1,
+                )
+                self.single_tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
+            self.single_tex.write(self.stim_arr.frame_at(frame_idx).tobytes())
             self.single_tex.use(location=self.TEXTURE_UNIT)
         else:
             assert self.textures is not None

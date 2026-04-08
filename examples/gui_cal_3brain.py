@@ -491,7 +491,7 @@ class CalibrationGui(QMainWindow):
         self.send_to_all("load", stim_path=stim_path, stim_config=None, loops=1)
 
         try:
-            response = self.wait_for_responses(timeout=10)
+            response = self.wait_for_responses(timeout=30)
             if isinstance(response, dict) and "total_frames" in response:
                 self.total_frames = response["total_frames"]
                 self.current_frame = -1
