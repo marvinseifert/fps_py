@@ -308,10 +308,20 @@ class StimArray:
     StimArray can be considered the datum of a TextureSequence stimulus program. The
     main purpose of this class is to encapsulate serialization and deserialization.
 
-    The array data must try avoid using too much memory or disk space. The nature of
-    many stimuli, such as being full-field or monochrome, means that broadcasting can be
-    utilized to significantly reduce the number of array elements needed to represent a
-    stimuli.
+    Goals:
+        - act as the datum of a TextureSequence stimulus program.
+        - save/load from hdf5 files, with support for versioning and backward
+        compatibility.
+        - reduce the disk and memory footprint of stimuli
+
+    ## Memory and disk space
+    Broadcasting and zooming are used to inflate stimuli, allowing them to be encoded 
+    in smaller arrays. 
+
+    ### Broadcasting and channel mask
+    The nature of many stimuli, such as being full-field or monochrome, means that
+    broadcasting can be utilized to significantly reduce the number of array elements
+    needed to represent a stimuli.
 
     There are two ways in which broadcasting takes effect:
 
@@ -342,6 +352,34 @@ class StimArray:
 
     Note that the channels masked out by a channel_mask are off (0) and not say 50%
     intensity. A separate parameter would be needed to support that.
+
+    ### Zoom
+    A stimulus is zoomed on presentation, based on the `zoom` parameter. An example
+    use case is having a 80x50 single pixel noise stimulus be zoomed by 16x to fill
+    a 1280x800 display with a 16x16 grid of squares.
+
+    ## Conventions
+    An array of shape (F, H, W, C) corresponds to:
+        - F frames
+        - (H, W) spatial dimensions, with (0, 0) corresponding to the top-left corner.
+        - C channels
+        - uint8 values in [0, 255]. The values are **not linear**, but interpreted as
+          sRGB values. The standard conversion from linear to sRGB is:
+
+          ```python
+          np.where(arr <= 0.0031308, arr * 12.92, 1.055 * (arr ** (1 / 2.4)) - 0.055)
+           ```
+
+          Nearly all displays (including the light crafters) expect these sRGB values
+          as input and will automatically decode them, so it is a mistake to store
+          stimuli with a linear scale. Storing linear values with more bits, such as
+          float16 or float32, and then converting to sRGB before sending to the display
+          is possible; however, this will increase the disk footprint and is not 
+          currently supported by StimArray.
+
+    It is important to note that OpenGL textures have (0, 0) correspond to the
+    bottom-left. The TextureSequence stimulus program will vertically flip frames in
+    order to maintaing the convention that (0, 0) is the top-left corner. 
     """
 
     _frames: np.ndarray
@@ -1139,6 +1177,11 @@ class TextureSequence(StimProgram):
             frames = einops.rearrange(
                 self.stim_arr.masked_frames(), "n f h w c -> (n f) h w c"
             )
+            # Frames must be vertically flipped for OpenGL. 
+            #   * StimArray's convention: (0, 0) is top left.
+            #   * OpenGL's convention: (0, 0) is bottom left.
+            frames = frames[:, ::-1, :, :]
+
             for i in range(F * N):
                 # masked_frame = self.stim_arr.frame_at(i)
                 masked_frame = frames[i]
@@ -1193,7 +1236,12 @@ class TextureSequence(StimProgram):
                     alignment=1,
                 )
                 self.single_tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
-            self.single_tex.write(self.stim_arr.frame_at(frame_idx).tobytes())
+            frame = self.stim_arr.frame_at(frame_idx)
+            # Frames must be vertically flipped for OpenGL. 
+            #   * StimArray's convention: (0, 0) is top left.
+            #   * OpenGL's convention: (0, 0) is bottom left.
+            frame = frame[::-1, :, :]
+            self.single_tex.write(frame.tobytes())
             self.single_tex.use(location=self.TEXTURE_UNIT)
         else:
             assert self.textures is not None
