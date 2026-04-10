@@ -267,6 +267,9 @@ class Presenter:
             if not self._is_step_play():
                 self.window.ctx.clear(*self.clear_rgba)
                 self.window.swap_buffers()
+            else:
+                # This next line is a proposed fix for the Windows first frame issue.
+                self.window._window.dispatch_events()
             self.communicate()  # Check for commands from the main process (gui)
             time.sleep(0.001)  # Sleep for 1 ms to avoid busy waiting
         self.close_window()
@@ -389,7 +392,7 @@ class Presenter:
         self.window.swap_buffers()
 
     def show_frame(self, frame):
-        """Step one frame in the loaded stimulus.
+        """Show the given frame.
 
         This function operates similar to shader_loop().
 
