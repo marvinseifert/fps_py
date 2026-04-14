@@ -22,6 +22,7 @@ import fpspy.config
 import fpspy.queue
 import fpspy._logging
 import fpspy.arduino
+import fpspy.arduino_3brain
 import OpenGL.GL as gl
 import fpspy.stim as stim
 import fpspy.color
@@ -589,10 +590,14 @@ def pyglet_app(
         delay=delay,
     )
     if enable_triggers:
-        arduino = fpspy.arduino.Arduino(
+        # arduino = fpspy.arduino.Arduino(
+        #     port=fpspy.config.get_arduino_port(config),
+        #     baud_rate=fpspy.config.get_arduino_baud_rate(config),
+        #     trigger_command=fpspy.config.get_arduino_trigger_command(config),
+        # )
+        arduino = fpspy.arduino_3brain.Arduino3Brain(
             port=fpspy.config.get_arduino_port(config),
             baud_rate=fpspy.config.get_arduino_baud_rate(config),
-            trigger_command=fpspy.config.get_arduino_trigger_command(config),
         )
         # Send arduino triggers on buffer swap
         presenter.register_on_trigger(arduino.send_trigger)
