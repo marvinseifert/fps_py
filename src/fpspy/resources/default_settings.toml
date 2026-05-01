@@ -39,14 +39,17 @@ channels = [0, 1, 2]
 # RGB values will be interpreted as sRGB by the monitor. 
 clear_rgba = [0.73, 0.73, 0.73, 1.0]
 
-[windows."2"]
-x_shift = -500
-y_shift = 1000
-mirror = false
-rotation = 0
-window_size = [500, 500]
-fullscreen = false
-style = "transparent"
-channels = [0, 1, 2]
-# RGB values will be interpreted as sRGB by the monitor. 
-clear_rgba = [0.73, 0.73, 0.73, 1.0]
+# Don't add a second window, as custom configs could not be able to 
+# specify just a single window, as the _deep_merge would add this second
+# window.
+# [windows."2"]
+# x_shift = -500
+# y_shift = 1000
+# mirror = false
+# rotation = 0
+# window_size = [500, 500]
+# fullscreen = false
+# style = "transparent"
+# channels = [0, 1, 2]
+# # RGB values will be interpreted as sRGB by the monitor. 
+# clear_rgba = [0.73, 0.73, 0.73, 1.0]
