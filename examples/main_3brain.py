@@ -13,6 +13,7 @@ import fpspy.play_3brain
 import fpspy.stim
 import fpspy.queue
 import fpspy._logging as _logging
+import json
 
 _logger = logging.getLogger(__name__)
 
@@ -75,6 +76,14 @@ def play(
         "--triggers/--no-triggers",
         help="Enable Arduino triggers during presentation.",
     ),
+    lazy_textures: bool = typer.Option(
+        False,
+        "--lazy-textures/--no-lazy-textures",
+        help=(
+            "Whether to lazy load texture, or create all textures before starting. This "
+            "option only applies to TextureSequence shader programs."
+        )
+    ),
     verbose: int = typer.Option(
         0,
         "--verbose",
@@ -114,13 +123,15 @@ def play(
         )
     )
     play_cmd = "play"
+    # Currently, only TextureSequence takes an option (lazy_textures).
+    stim_config = {"lazy_textures": lazy_textures}
     # Create queues for inter-process communication.
     for queue in cmd_queues:
         fpspy.queue.put_onto(
             queue,
             play_cmd,
             stim_path=stim_path,
-            stim_config=None,
+            stim_config=json.dumps(stim_config),
             loops=loops,
             t0=t0,
             close_after=True,

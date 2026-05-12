@@ -18,6 +18,33 @@ import moderngl
 import moderngl_window
 from moderngl_window.conf import settings
 import numpy as np
+import pyglet
+
+# --- pyglet 1.x -> 2.x compatibility shim -----------------------------------
+# moderngl_window's pyglet adapter (context/pyglet/window.py) calls
+# `pyglet.canvas.get_display()` inside its fullscreen-handling code path. In
+# pyglet 1.x the display API lived under `pyglet.canvas`; in pyglet 2.x that
+# module was renamed to `pyglet.display` (same API surface). moderngl_window
+# hasn't been updated for the rename, so on pyglet 2.x any window created with
+# `fullscreen=True` crashes with:
+#     AttributeError: module 'pyglet' has no attribute 'canvas'
+#
+# Windowed-mode windows never enter the broken branch, so this bug is silent
+# until the first fullscreen window is created — which is the normal mode for
+# stimulus presentation.
+#
+# This shim aliases `pyglet.canvas` to `pyglet.display` *before* any window is
+# created, so the call resolves to the (working) pyglet 2.x display API. Both
+# modules expose `get_display()` returning the same `Display` shape, so the
+# alias is behaviorally invisible.
+#
+# Remove this shim when one of the following is true:
+#   - moderngl_window is upgraded to a version that uses `pyglet.display`.
+#   - pyglet is pinned to < 2.0 in pyproject.toml.
+# ----------------------------------------------------------------------------
+if not hasattr(pyglet, "canvas"):
+    pyglet.canvas = pyglet.display
+
 import fpspy.config
 import fpspy.queue
 import fpspy._logging
@@ -450,6 +477,12 @@ class Presenter:
         _logger.debug(
             f"Framebuffer sRGB capable: {srgb_capable}, enabled: {srgb_enabled}"
         )
+        if srgb_enabled:
+            raise RuntimeError(
+                "Default framebuffer has sRGB enabled, which means writing to it will "
+                "apply a linear->sRGB conversion. This is not compatible with fpspy "
+                "which promises to send program outputs to the framebuffer as-is."
+            )
         dropped_frames = []
         for i in range(N):
             is_exit = self.communicate()

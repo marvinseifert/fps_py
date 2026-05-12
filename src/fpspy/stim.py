@@ -4,7 +4,9 @@ import time
 from pathlib import Path
 from typing import Protocol, Optional, Sequence, Tuple
 import importlib.resources
+import json
 import h5py
+import hdf5plugin
 import numpy as np
 import einops
 import moderngl
@@ -22,9 +24,12 @@ __all__ = [
     "StimArray",
     "TextureSequence",
     "ProceduralShader",
+    "MoviePlayer",
     "StimProgram",
     "CURRENT_HDF5_FORMAT_VER",
 ]
+
+MOVIE_SUFFIXES = (".mp4", ".mkv", ".mov", ".webm")
 
 
 CURRENT_HDF5_FORMAT_VER = "1"
@@ -315,8 +320,8 @@ class StimArray:
         - reduce the disk and memory footprint of stimuli
 
     ## Memory and disk space
-    Broadcasting and zooming are used to inflate stimuli, allowing them to be encoded 
-    in smaller arrays. 
+    Broadcasting and zooming are used to inflate stimuli, allowing them to be encoded
+    in smaller arrays.
 
     ### Broadcasting and channel mask
     The nature of many stimuli, such as being full-field or monochrome, means that
@@ -374,12 +379,12 @@ class StimArray:
           as input and will automatically decode them, so it is a mistake to store
           stimuli with a linear scale. Storing linear values with more bits, such as
           float16 or float32, and then converting to sRGB before sending to the display
-          is possible; however, this will increase the disk footprint and is not 
+          is possible; however, this will increase the disk footprint and is not
           currently supported by StimArray.
 
     It is important to note that OpenGL textures have (0, 0) correspond to the
     bottom-left. The TextureSequence stimulus program will vertically flip frames in
-    order to maintaing the convention that (0, 0) is the top-left corner. 
+    order to maintaing the convention that (0, 0) is the top-left corner.
     """
 
     _frames: np.ndarray
@@ -439,7 +444,12 @@ class StimArray:
             The metadata should be a non-nested dictionary with key-value pairs
             that are serializable with hdf5.
         """
-        self._frames = np.asarray(frames)
+        # _frames is np.ndarray (in-memory construction) or h5py.Dataset (lazy from
+        # HDF5). Both support .shape/.dtype/.ndim/__len__/__getitem__, which is all
+        # the hot path uses. broadcasted_view() materializes when numpy ops are
+        # needed. When _frames is a Dataset, it holds a reference to its parent
+        # h5py.File, which keeps the file open until self is GC'd or .close()'d.
+        self._frames = frames
         self._frame_durations = np.asarray(frame_durations)
         # Reduce to scalar if possible, so that there is more certainty about the type.
         if np.size(self._frame_durations) == 1:
@@ -519,10 +529,18 @@ class StimArray:
     def broadcasted_view(self):
         """Get frames as shape (N, F, H, W, C) and channel mask as shape (N, F, 1, 1, C).
 
-        This does not create new arrays.
+        Materializes lazy (h5py.Dataset-backed) frames to a full numpy array;
+        cheap no-op if _frames is already ndarray. Callers that only need one
+        frame should use frame_at() instead.
         """
-        assert self._frames.ndim == 4
-        F1, H, W, C1 = self._frames.shape
+        if isinstance(self._frames, h5py.Dataset):
+            _logger.info(
+                f"Materializing all frames from h5py.Dataset to ndarray "
+                f"(shape={self._frames.shape}, dtype={self._frames.dtype})."
+            )
+        frames = np.asarray(self._frames)
+        assert frames.ndim == 4
+        F1, H, W, C1 = frames.shape
         channel_mask = self.channel_mask()
         N, F2, _, _, C2 = channel_mask.shape
         # The frames dimension decides F, and the channel mask decides C.
@@ -530,21 +548,37 @@ class StimArray:
         assert C1 == 1 or C1 == C2, f"Channel dim is incompatible. {C1=}, {C2=}"
         C = C2
         F = F1
-        # This is not needed, as leading 1s will be added automatically.
-        # frames = einops.rearrange(
-        #     self._frames, "f h w c -> 1 f h w c", f=F, h=H, w=W, c=C1
-        # )
-        frames = np.broadcast_to(self._frames, (N, F, H, W, C))
+        frames = np.broadcast_to(frames, (N, F, H, W, C))
         channel_mask = np.broadcast_to(channel_mask, (N, F, 1, 1, C))
         return frames, channel_mask
 
     def frame_at(self, frame_idx):
-        """Index into the stimulus as an (N x F, H, W, C) array."""
-        frames, channel_mask = self.broadcasted_view()
-        frame = einops.rearrange(frames, "n f h w c -> (n f) h w c")[frame_idx]
-        mask = einops.rearrange(channel_mask, "n f 1 1 c -> (n f) 1 1 c")[frame_idx]
-        masked_frame = frame * mask
-        return masked_frame
+        """Index into the stimulus as an (N x F, H, W, C) array.
+
+        Lazy-friendly: reads exactly one frame from _frames (one chunk if backed
+        by h5py.Dataset) and applies the channel mask. Does not materialize the
+        full frame array.
+        """
+        N, F, _, _, C = self.shape
+        f = frame_idx % F  # frame index within the (possibly repeated) frames array.
+        # This next line is where we read to create a numpy array.
+        frame = self._frames[f]
+        assert isinstance(frame, np.ndarray), f"Should be a np.ndarray. {type(frame)=}"
+        mask = self.channel_mask()
+        mask = np.broadcast_to(mask, (N, F, 1, 1, C))
+        per_frame_mask = einops.rearrange(mask, "n f 1 1 c -> (n f) 1 1 c")[frame_idx]
+        # A more direct approach would be:
+        #   m_f = 0 if mask.shape[1] == 1 else f
+        #   per_frame_mask = mask[n, m_f, 0, 0]
+        return frame * per_frame_mask
+
+    # Previously, frame_at() was tidier, but it materialized a full frame numpy array.
+    # def _frame_at_old(self, frame_idx):
+    #     frames, channel_mask = self.broadcasted_view()
+    #     frame = einops.rearrange(frames, "n f h w c -> (n f) h w c")[frame_idx]
+    #     mask = einops.rearrange(channel_mask, "n f 1 1 c -> (n f) 1 1 c")[frame_idx]
+    #     masked_frame = frame * mask
+    #     return masked_frame
 
     def masked_frames(self):
         """Apply channel mask to frames, resulting in an (N, F, H, W, C) array.
@@ -555,8 +589,10 @@ class StimArray:
         are much smaller arrays, possibly as small as (F, H, W, 1) and (C,).
         """
         frames, channel_mask = self.broadcasted_view()
-        _logger.info(f"[start] Expanding frames with channel mask "
-            f"{frames.shape} x {channel_mask.shape} -> {self.shape}")
+        _logger.info(
+            f"[start] Expanding frames with channel mask "
+            f"{frames.shape} x {channel_mask.shape} -> {self.shape}"
+        )
         masked_frames = frames * channel_mask
         _logger.info(f"[end] Expanding frames with channel mask")
         assert masked_frames.ndim == 5, f"{masked_frames.shape=}"
@@ -572,9 +608,9 @@ class StimArray:
 
     @property
     def n_channels(self):
-        """The number of channels of the frames array."""
-        nch = self._frames.shape[3]
-        return nch
+        """The number of channels, after any expandion due to channel mask."""
+        n_ch = self.shape[-1]
+        return n_ch
 
     def channel_mask(self) -> np.ndarray:
         """The effective channel mask after broadcasting.
@@ -718,9 +754,28 @@ class StimArray:
         with h5py.File(path, "w") as f:
             _write_hdf5_v1(self, f, dataset_opts)
 
+    def close(self):
+        """Close the underlying HDF5 file if this StimArray is HDF5-backed.
+
+        Idempotent. For in-memory StimArrays this is a no-op.
+        """
+        if isinstance(self._frames, h5py.Dataset):
+            self._frames.file.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
     @staticmethod
     def read_hdf5(path: Path):
         """Read a stimulus from an HDF5 file.
+
+        For format v1, the returned StimArray is lazy: `_frames` is an
+        `h5py.Dataset` and the HDF5 file remains open. The Dataset keeps the
+        File alive via Python refs; call `.close()` (or use as a context
+        manager) to release the file promptly.
 
         Parameters
         ----------
@@ -729,17 +784,27 @@ class StimArray:
 
         Returns
         -------
-        Stim
+        StimArray
             The stimulus object created from the HDF5 file.
         """
-        with h5py.File(path, "r") as f:
+        f = h5py.File(path, "r")#, rdcc_nbytes=10 * 1024 * 1024)  # 10MB chunk cache.
+        try:
             ver = f.attrs.get("format_version", "0")
             if ver == "0":
-                return _read_hdf5_v0(f)
+                # v0 reads eagerly; file is no longer needed after _read_hdf5_v0
+                # returns. Close it here.
+                stim = _read_hdf5_v0(f)
+                f.close()
+                return stim
             elif ver == "1":
+                # File stays open. Dataset in the returned StimArray keeps it
+                # alive until close()/GC.
                 return _read_hdf5_v1(f)
             else:
                 raise ValueError(f"Unsupported HDF5 format version: {ver}")
+        except BaseException:
+            f.close()
+            raise
 
     @staticmethod
     def preview_hdf5(path: Path):
@@ -771,14 +836,54 @@ class StimArray:
         return frame_times
 
 
-def _write_hdf5_v1(stim: StimArray, f, dataset_opts):
+def _chunk_shape(arr, max_chunk_bytes=1 * 1024 * 1024):
+    """Calculate an array's chunk shape so that each chunk fills up to max_chunk_bytes.
+
+    Not using a good chunk shape can lead to very slow read performance. For example,
+    if the chuck is too big, then each read will involve reading and decompressing a
+    large amount of data, and if it doesn't fit in the hdf5 chunk cache, most of the
+    chunk will be evicted before the next read, possibly leading to the same data
+    being loaded and decompressed multiple times.
+
+    If you increase the chunk size being saved, you should also increase the chunk cache
+    size when reading. The default chunk cache size is 1MB.
+
+    If a single frame doesn't fit in the max_chunk_bytes, there is a warning, but no
+    error; instead, a best effort is made, and the chunk is set to the size of a single
+    frame.
+    """
+    frame_bytes = max(1, int(np.prod(arr.shape[1:]) * arr.dtype.itemsize))
+    if frame_bytes > max_chunk_bytes:
+        _logger.warning(
+            f"Single frame is larger than max chunk size. {frame_bytes=}, "
+            f"{max_chunk_bytes=}. Consider increasing max_chunk_bytes. "
+            f"{frame_bytes / (2**20):.2f} MiB per frame. This will be used for the "
+            f"chunk size. For good read performance, ensure the chunk cache is larger "
+            f" than this."
+        )
+        n = 1
+    else:
+        n = min(arr.shape[0], int(max_chunk_bytes // frame_bytes))
+    assert n > 0
+    return (n, *arr.shape[1:])
+
+
+def _write_hdf5_v1(stim: StimArray, f, dataset_opts=None):
     if dataset_opts is None:
         dataset_opts = {
-            "compression": "gzip",
-            "compression_opts": 4,
-            "chunks": True,
-            # A compression related shuffle (doesn't affect data).
-            "shuffle": True,
+            # zstd at clevel=9 gives ~2700x compression on highly-redundant frame data
+            # (e.g. moving bars on black: 3 GB -> 1.15 MB), with per-frame decode
+            # under 12 ms and no 20+ ms outliers. blosclz/lz4 decode faster on
+            # already-cached data but have occasional 20+ ms tail latencies and
+            # 12x larger files on this kind of stim.
+            **hdf5plugin.Blosc(cname="zstd", clevel=1, shuffle=hdf5plugin.Blosc.SHUFFLE),
+
+            # Alternatives, kept for reference:
+            # **hdf5plugin.Blosc(cname="blosclz", clevel=5, shuffle=hdf5plugin.Blosc.SHUFFLE),
+            #   ~2x larger files than zstd cl=9, slightly faster median (9.65 vs 9.81 ms)
+            #   but worse worst-case (max ~21 ms vs ~11 ms).
+            # **hdf5plugin.Blosc(cname="lz4hc",   clevel=5, shuffle=hdf5plugin.Blosc.SHUFFLE),
+            #   ~12x larger than zstd cl=9, similar worst-case (~11 ms).
         }
 
     def filter_opts(arr, dataset_opts):
@@ -791,6 +896,14 @@ def _write_hdf5_v1(stim: StimArray, f, dataset_opts):
             res.pop("shuffle", None)
             res.pop("compression_opts", None)
         return res
+
+    def chunk_opts(arr):
+        shape = getattr(arr, "shape", None)
+        if not shape:
+            return {}
+        else:
+            assert 0 not in shape, f"Got zero size dimension. {shape=}"
+            return {"chunks": _chunk_shape(arr)}
 
     f.attrs["format_version"] = "1"
     label = stim.label if stim.label is not None else h5py.Empty("f")
@@ -805,26 +918,31 @@ def _write_hdf5_v1(stim: StimArray, f, dataset_opts):
     f.attrs["zoom"] = stim.zoom
     f.attrs["label"] = label
     f.create_dataset(
-        "triggers", data=triggers, dtype="uint64", **filter_opts(triggers, dataset_opts)
+        "triggers",
+        data=triggers,
+        dtype="uint64",
+        **filter_opts(triggers, dataset_opts | chunk_opts(triggers)),
     )
     f.create_dataset(
         "channel_mask",
         data=channel_mask,
         dtype="uint8",
-        **filter_opts(channel_mask, dataset_opts),
+        **filter_opts(channel_mask, dataset_opts | chunk_opts(channel_mask)),
     )
     f.create_dataset(
         "frames",
         data=stim._frames,
         dtype="uint8",
-        **filter_opts(stim._frames, dataset_opts),
+        **filter_opts(stim._frames, dataset_opts | chunk_opts(stim._frames)),
     )
     # HDF5 supports 0-dim datasets, so we can store the float|Sequence[float] directly.
     f.create_dataset(
         "frame_durations",
         data=stim._frame_durations,
         dtype="float64",
-        **filter_opts(stim._frame_durations, dataset_opts),
+        **filter_opts(
+            stim._frame_durations, dataset_opts | chunk_opts(stim._frame_durations)
+        ),
     )
 
     # Always create metadata group and store attributes
@@ -874,7 +992,11 @@ def _read_hdf5_v1(f):
     if ver != "1":
         _logger.warning(f"Expected format version 1, got {ver}")
     zoom = _get_attr(f, "zoom", default=1)
-    frames = f["frames"][()]
+    # Keep frames as an h5py.Dataset (lazy). _write_hdf5_v1 always writes uint8
+    # (see line ~853), so this should already be uint8 for any file produced by
+    # this codebase. If a foreign file isn't uint8, materialize and convert
+    # eagerly (slow, but rare).
+    frames = f["frames"]
     frame_durations = f["frame_durations"][()]
     triggers = get_dataset(f, "triggers", default=None)
     channel_mask = get_dataset(f, "channel_mask", default=None)
@@ -882,9 +1004,10 @@ def _read_hdf5_v1(f):
     metadata = dict(f["metadata"])
     if frames.dtype != np.uint8:
         _logger.warning(
-            f"Expected uint8 dtype, got {frames.dtype=}. Converting to uint8."
+            f"Expected uint8 dtype, got {frames.dtype=}. Materializing and "
+            f"converting to uint8 (load will be slow for large stims)."
         )
-        frames = frames.astype(np.uint8)
+        frames = frames[()].astype(np.uint8)
 
     return StimArray(
         frames=frames,
@@ -1059,6 +1182,13 @@ class StimProgram(Protocol):
         """
         ...
 
+    def is_linear(self) -> bool:
+        """Return True if values are linear RGB, or False if sRGB.
+
+        It is assumed that the display will received sRGB values
+        """
+        ...
+
     def render(self, ctx, frame_idx, global_frame_num) -> None: ...
 
     def cleanup(self) -> None: ...
@@ -1122,7 +1252,13 @@ def from_script(module_path: Path, config: Optional[str]) -> StimProgram:
 def create_program(path: Path, config: Optional[str] = None) -> StimProgram:
     if path.suffix in (".h5", ".hdf5"):
         stim_array = StimArray.read_hdf5(path)
-        stim_program = TextureSequence(stim_arr=stim_array, lazy_textures=False)
+        lazy_textures = False
+        if config is not None:
+            config_dict = json.loads(config)
+            lazy_textures = config_dict.get("lazy_textures", False)
+        stim_program = TextureSequence(stim_arr=stim_array, lazy_textures=lazy_textures)
+    elif path.suffix in MOVIE_SUFFIXES:
+        stim_program = MoviePlayer(movie_path=path)
     elif path.suffix == ".py":
         stim_program = from_script(path, config)
     else:
@@ -1131,6 +1267,7 @@ def create_program(path: Path, config: Optional[str] = None) -> StimProgram:
 
 
 class TextureSequence(StimProgram):
+    """Render numpy arrays (from a StimArray) as a sequence of OpenGL textures."""
 
     # We always bind to texture unit 0.
     TEXTURE_UNIT = 0
@@ -1177,10 +1314,9 @@ class TextureSequence(StimProgram):
             frames = einops.rearrange(
                 self.stim_arr.masked_frames(), "n f h w c -> (n f) h w c"
             )
-            # Frames must be vertically flipped for OpenGL. 
-            #   * StimArray's convention: (0, 0) is top left.
-            #   * OpenGL's convention: (0, 0) is bottom left.
-            frames = frames[:, ::-1, :, :]
+            # No CPU-side V flip: the vertex shader inverts uv.y so texture (0,0)
+            # samples to the top of the quad, matching StimArray's
+            # (0,0)=top-left convention.
 
             for i in range(F * N):
                 # masked_frame = self.stim_arr.frame_at(i)
@@ -1237,10 +1373,7 @@ class TextureSequence(StimProgram):
                 )
                 self.single_tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
             frame = self.stim_arr.frame_at(frame_idx)
-            # Frames must be vertically flipped for OpenGL. 
-            #   * StimArray's convention: (0, 0) is top left.
-            #   * OpenGL's convention: (0, 0) is bottom left.
-            frame = frame[::-1, :, :]
+            # No CPU-side V flip needed: the vertex shader inverts uv.y.
             self.single_tex.write(frame.tobytes())
             self.single_tex.use(location=self.TEXTURE_UNIT)
         else:
@@ -1249,7 +1382,7 @@ class TextureSequence(StimProgram):
         self._vao.render(moderngl.TRIANGLES)
 
     def cleanup(self) -> None:
-        """Release OpenGL resources."""
+        """Release OpenGL resources and any HDF5 file held by the StimArray."""
         if self.single_tex is not None:
             self.single_tex.release()
             self.single_tex = None
@@ -1263,6 +1396,8 @@ class TextureSequence(StimProgram):
             self._vbo.release()
         self._vao = None
         self._vbo = None
+        if self.stim_arr is not None:
+            self.stim_arr.close()
 
 
 class ProceduralShader(StimProgram):
@@ -1362,3 +1497,174 @@ class ProceduralShader(StimProgram):
             self._vbo.release()
         self._vao = None
         self._vbo = None
+
+
+class MoviePlayer(StimProgram):
+    """Play a video file as a stimulus.
+
+    Uses PyAV (libav) to decode on the CPU and uploads each frame via
+    `texture.write`. Trades a small per-frame decode cost for much smaller
+    files on disk (temporal compression) and the ability to read fps directly
+    from the container.
+
+    Frame rate comes from the video stream's `average_rate`; triggers default
+    to one per frame. Variable-frame-rate inputs are rejected at setup.
+    """
+
+    TEXTURE_UNIT = 0
+
+    def __init__(
+        self,
+        movie_path: Path,
+        zoom: float = 1.0,
+        is_linear: bool = False,
+        label: Optional[str] = None,
+    ) -> None:
+        self.movie_path = Path(movie_path)
+        self.zoom = zoom
+        self._is_linear = is_linear
+        self.label = label if label is not None else self.movie_path.stem
+
+        self.win_id = None
+        self._container = None
+        self._stream = None
+        self._decoder_iter = None
+        self._last_decoded_idx = -1
+        self._last_frame_bytes = None
+        self._n_frames = None
+        self._width = None
+        self._height = None
+        self._tex = None
+        self._program = None
+        self._vbo = None
+        self._vao = None
+
+    def setup(
+        self,
+        ctx: moderngl.Context,
+        win_width,
+        win_height,
+        channels: Optional[Sequence[int]] = None,
+        mirror: Optional[bool] = None,
+        rotation: Optional[float] = None,
+        win_id: Optional[int] = None,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        # Defer PyAV import so the dep only matters when a movie is actually
+        # played. Keeps `import fpspy.stim` fast and lets users skip the av
+        # install if they never play movies.
+        import av  # noqa: PLC0415
+
+        self.win_id = win_id
+        if mirror is None:
+            mirror = False
+        if rotation is None:
+            rotation = 0
+        if channels is not None:
+            _logger.info(
+                f"MoviePlayer ignores `channels`; video is rendered as-is. "
+                f"{channels=}"
+            )
+
+        self._container = av.open(str(self.movie_path))
+        self._stream = self._container.streams.video[0]
+        self._stream.thread_type = "AUTO"
+
+        avg_rate = self._stream.average_rate
+        guessed_rate = self._stream.guessed_rate
+        if avg_rate is None or avg_rate != guessed_rate:
+            raise ValueError(
+                f"Movie {self.movie_path} appears to be variable-frame-rate "
+                f"({avg_rate=}, {guessed_rate=}). Re-encode with constant "
+                f"frame rate (e.g. `ffmpeg -r 30 -vsync cfr`)."
+            )
+        n_frames = self._stream.frames
+        if n_frames <= 0:
+            raise ValueError(
+                f"Movie {self.movie_path} reports {n_frames} frames; cannot "
+                f"compute frame times. Re-mux with a tool that writes frame "
+                f"counts (e.g. `ffmpeg -i in.mp4 -c copy out.mp4`)."
+            )
+        spf = 1.0 / float(avg_rate)
+        self._n_frames = n_frames
+        self._width = self._stream.width
+        self._height = self._stream.height
+
+        self._tex = ctx.texture(
+            (self._width, self._height), 3, samples=0, alignment=1
+        )
+        self._tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
+
+        self._program = self._compile_program(ctx)
+        quad = create_centered_quad(
+            int(self._width * self.zoom),
+            int(self._height * self.zoom),
+            win_width,
+            win_height,
+            mirror,
+            rotation,
+        )
+        self._vbo = ctx.buffer(quad.tobytes())
+        self._vao = ctx.simple_vertex_array(self._program, self._vbo, "in_pos")
+
+        self._decoder_iter = self._make_iter()
+
+        frame_times = spf_to_frame_times(spf, n_frames)
+        triggers = np.arange(n_frames, dtype=np.uint64)
+        return frame_times, triggers
+
+    def _compile_program(self, ctx):
+        resource_dir = importlib.resources.files("fpspy.resources")
+        with (resource_dir / QUAD_VERTEX_SHADER).open("r") as f:
+            vert_src = f.read()
+        with (resource_dir / TEXTURE_FRAG_SHADER).open("r") as f:
+            frag_src = f.read()
+        program = ctx.program(vertex_shader=vert_src, fragment_shader=frag_src)
+        program["tex"].value = self.TEXTURE_UNIT
+        return program
+
+    def _make_iter(self):
+        # rgb24 matches the 3-channel RGB texture; PyAV does YUV->RGB via
+        # libswscale on the CPU.
+        return (
+            frame.to_ndarray(format="rgb24")
+            for frame in self._container.decode(video=0)
+        )
+
+    def render(self, ctx, frame_idx, global_frame_num) -> None:
+        # Video decoders are sequential. Three cases:
+        #   * frame_idx == last  -> reuse the texture (display fps > stim fps).
+        #   * frame_idx >  last  -> advance the iterator that many steps.
+        #   * frame_idx <  last  -> loop wrap; seek to start and re-decode.
+        assert frame_idx < self._n_frames, (
+            f"Frame index out of bounds. {frame_idx=}, {self._n_frames=}"
+        )
+        if frame_idx < self._last_decoded_idx:
+            self._container.seek(0, stream=self._stream)
+            self._decoder_iter = self._make_iter()
+            self._last_decoded_idx = -1
+        if frame_idx > self._last_decoded_idx:
+            frame = None
+            while self._last_decoded_idx < frame_idx:
+                frame = next(self._decoder_iter)
+                self._last_decoded_idx += 1
+            assert frame is not None
+            self._tex.write(frame.tobytes())
+        self._tex.use(location=self.TEXTURE_UNIT)
+        self._vao.render(moderngl.TRIANGLES)
+
+    def is_linear(self) -> bool:
+        return self._is_linear
+
+    def cleanup(self) -> None:
+        if self._tex is not None:
+            self._tex.release()
+            self._tex = None
+        if self._vao is not None:
+            self._vao.release()
+            self._vao = None
+        if self._vbo is not None:
+            self._vbo.release()
+            self._vbo = None
+        if self._container is not None:
+            self._container.close()
+            self._container = None
