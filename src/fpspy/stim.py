@@ -620,7 +620,8 @@ class StimArray:
         everything as channel first, then we could just rely on broadcasting.
         """
         if self._channel_mask is None:
-            mask = np.ones((1, 1, 1, 1, self.n_channels), dtype=bool)
+            frames_nch = self._frames.shape[-1]
+            mask = np.ones((1, 1, 1, 1, frames_nch), dtype=bool)
         elif self._channel_mask.ndim == 1:
             mask = einops.rearrange(self._channel_mask, "c -> 1 1 1 1 c")
         elif self._channel_mask.ndim == 2:
