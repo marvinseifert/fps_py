@@ -264,15 +264,16 @@ class Presenter:
             (fps).
         """
         # Establish the texture for each stimulus frame
+        N, F, H, W, C = stim.shape
         textures = [
             self.window.ctx.texture(
-                (stim.width, stim.height),
-                stim.n_channels,
-                stim.frames[i, :].tobytes(),
+                (W, H),
+                C,
+                stim.frame_at(i).tobytes(),
                 samples=0,
                 alignment=1,
             )
-            for i in range(len(stim.frames))
+            for i in range(N * F)
         ]
         return textures
 

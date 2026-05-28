@@ -4,6 +4,7 @@ import platformdirs
 import logging
 import datetime
 from typing import Optional
+import copy
 
 try:
     # Python 3.11+
@@ -174,6 +175,20 @@ def config_to_str(config: dict) -> str:
     return res
 
 
+def _apply_window_defaults(config: dict) -> dict:
+    """Merge `windows.default` into each numbered window definition."""
+    windows = config.get("windows", {})
+    template = windows.pop("default", None)
+    if template is None:
+        return config
+    for key, win in list(windows.items()):
+        if isinstance(win, dict):
+            merged = copy.deepcopy(template)
+            _deep_merge(merged, win)
+            windows[key] = merged
+    return config
+
+
 def load_config(path: Optional[Path] = None, overrides: Optional[dict] = None) -> dict:
     """
     Load config with default-fallback behavior.
@@ -184,6 +199,8 @@ def load_config(path: Optional[Path] = None, overrides: Optional[dict] = None) -
        a) explicit path passed by CLI, or
        b) user config file in standard location, if present
     3. overrides passed to function
+    4. Finally, and this might seem unusual, but merge window defaults at the end. This
+        is done at the end, as we don't yet know how many windows there will be.
     """
     # 1. Load default config
     default_cfg = _load_default_config()
@@ -206,6 +223,8 @@ def load_config(path: Optional[Path] = None, overrides: Optional[dict] = None) -
     if overrides is not None:
         config = _deep_merge(config, overrides)
 
+    # 4.
+    config = _apply_window_defaults(config)
     config = _resolve_paths(config)
     _logger.info(f"Effective config (toml):\n{config_to_str(config)}")
     return config

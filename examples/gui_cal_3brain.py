@@ -9,6 +9,7 @@ This replaces the tkinter version which doesn't work well on Wayland.
 
 import logging
 import multiprocessing as mp
+import queue
 import signal
 import time
 from pathlib import Path
@@ -70,7 +71,6 @@ class CaptureWorker(QThread):
         # These will be set for capture-remaining mode
         self.total_frames = 0
         self.current_frame = -1
-        self.start_frame = 0  # Frame to start capturing from
         self.cmd_queues: list[mp.Queue] = []
         self.status_queue: Optional[mp.Queue] = None
         self.n_windows = 0
@@ -132,13 +132,25 @@ class CaptureWorker(QThread):
         for queue in self.cmd_queues:
             fpspy.queue.put_onto(queue, cmd_type, **kwargs)
 
+    def clear_responses(self):
+        items = []
+        while True:
+            try:
+                items.append(self.status_queue.get_nowait())
+            except queue.Empty:
+                break
+        return items
+
     def wait_for_responses(self, timeout: float = 5.0):
         """Wait for responses from all presenter windows."""
         first_response = None
+        _logger.info("[s] waiting for responses")
         for _ in range(self.n_windows):
             response = self.status_queue.get(timeout=timeout)
+            print(response)
             if first_response is None:
                 first_response = response
+        _logger.info("[e] waiting for responses")
         return first_response
 
     def run(self):
@@ -158,27 +170,8 @@ class CaptureWorker(QThread):
     def _run_capture_remaining(self):
         """Capture from current frame to end."""
         # Determine start point
-        if self.current_frame < 0:
-            # Need to step to frame 0 first
-            self.send_to_all("step_next")
-            try:
-                response = self.wait_for_responses(timeout=5)
-                if isinstance(response, dict) and "stepped" in response:
-                    self.current_frame = response["stepped"]
-                    self.frame_updated.emit(self.current_frame)
-                else:
-                    self.error_occurred.emit(
-                        f"Failed to step to first frame: {response}"
-                    )
-                    self.finished.emit(False, "Failed to step to first frame")
-                    return
-            except Exception as e:
-                self.error_occurred.emit(f"Step error: {e}")
-                self.finished.emit(False, f"Step error: {e}")
-                return
-
-        self.start_frame = self.current_frame
-        frames_to_capture = self.total_frames - self.start_frame
+        self.current_frame = self.frame_idx
+        frames_to_capture = self.total_frames - self.frame_idx
 
         if frames_to_capture <= 0:
             self.finished.emit(True, "No frames remaining to capture")
@@ -193,43 +186,44 @@ class CaptureWorker(QThread):
                 self.finished.emit(False, f"Cancelled at frame {self.current_frame}")
                 return
 
-            frame_to_capture = self.start_frame + i
             # Progress is the frame number (GUI sets max to total_frames)
             self.progress.emit(
-                frame_to_capture,
-                f"Capturing frame {frame_to_capture}/{self.total_frames - 1}",
+                self.current_frame,
+                f"Capturing frame {self.current_frame}/{self.total_frames - 1}",
             )
-
-            # Step to next frame (except for first iteration if already on a frame)
-            if i > 0:
-                self.send_to_all("step_next")
-                try:
-                    response = self.wait_for_responses(timeout=5)
-                    if isinstance(response, dict) and "stepped" in response:
-                        self.current_frame = response["stepped"]
-                        self.frame_updated.emit(self.current_frame)
-                    else:
-                        self.error_occurred.emit(
-                            f"Step failed at frame {frame_to_capture}"
-                        )
-                        self.finished.emit(
-                            False, f"Step failed at frame {frame_to_capture}"
-                        )
-                        return
-                except Exception as e:
-                    self.error_occurred.emit(
-                        f"Step error at frame {frame_to_capture}: {e}"
-                    )
-                    self.finished.emit(
-                        False, f"Step error at frame {frame_to_capture}: {e}"
-                    )
-                    return
 
             # Capture
             capture_time_start = time.perf_counter()
             if not self.capture_image(self.current_frame):
                 self.finished.emit(
                     False, f"Capture failed at frame {self.current_frame}"
+                )
+                return
+
+            # Step to next frame
+            self.send_to_all("step_next")
+            try:
+                response = self.wait_for_responses(timeout=5)
+                if isinstance(response, dict) and "stepped" in response:
+                    fr = response["stepped"]
+                    if fr != self.current_frame + 1:
+                        raise mp.ProcessError(f"Unexpected next frame: {fr}")
+                    self.current_frame += 1
+                    self.frame_updated.emit(self.current_frame)
+                else:
+                    self.error_occurred.emit(
+                        f"Step failed at frame {self.current_frame}"
+                    )
+                    self.finished.emit(
+                        False, f"Step failed at frame {self.current_frame}"
+                    )
+                    return
+            except Exception as e:
+                self.error_occurred.emit(
+                    f"Step error at frame {self.current_frame}: {e}"
+                )
+                self.finished.emit(
+                    False, f"Step error at frame {self.current_frame}: {e}"
                 )
                 return
 
@@ -530,6 +524,7 @@ class CalibrationGui(QMainWindow):
                 self.current_frame = response["stepped"]
                 self.update_frame_label()
                 self.update_button_states()
+                self.update_status(f"Current frame: {self.current_frame}")
                 return True
         except Exception as e:
             self.update_status(f"Step error: {e}")
@@ -545,6 +540,7 @@ class CalibrationGui(QMainWindow):
                 self.current_frame = response["stepped"]
                 self.update_frame_label()
                 self.update_button_states()
+                self.update_status(f"Current frame: {self.current_frame}")
                 return True
         except Exception as e:
             self.update_status(f"Step error: {e}")
@@ -644,12 +640,13 @@ class CalibrationGui(QMainWindow):
         self.worker = CaptureWorker(
             self.capture_dir,
             self.server_url_edit.text(),
-            0,
+            start_frame,
             self.exposure_ms(),
             single_capture=False,
         )
         self.worker.total_frames = self.total_frames
-        self.worker.current_frame = self.current_frame
+        # Why not just use the start_frame passed to CaptureWorker()?
+        # self.worker.current_frame = self.current_frame
         self.worker.cmd_queues = self.cmd_queues
         self.worker.status_queue = self.status_queue
         self.worker.n_windows = self.n_windows
