@@ -107,7 +107,6 @@ def play(
         delay = fpspy.config.get_presentation_delay(config)
     if out_dir is None:
         out_dir = fpspy.config.create_outdir(config)
-
     _logger.info(f"{out_dir} [output dir]")
 
     if stim_path.suffix.lower() == ".h5":
