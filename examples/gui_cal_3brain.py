@@ -14,6 +14,7 @@ import signal
 import time
 from pathlib import Path
 from typing import Optional
+import json
 
 import requests
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
@@ -827,13 +828,16 @@ def cal_gui(
         raise typer.Exit(1)
 
     config = fpspy.config.load_config(config_path)
-    is_err = fpspy.play_3brain.validate_stim(stim_path, config)
+    # Currently, only TextureSequence takes an option (lazy_textures).
+    stim_config = {"lazy_textures": True}
+    is_err = fpspy.play_3brain.validate_stim(stim_path, json.dumps(stim_config))
     if is_err:
         raise typer.Exit(1)
 
     if out_dir is None:
         out_dir = fpspy.config.create_outdir(config)
     out_dir.mkdir(parents=False, exist_ok=True)
+    _logger.info(f"{out_dir} [output dir]")
 
     # We add subdirectory based on stimulus filename
     stim_stem = stim_path.stem
