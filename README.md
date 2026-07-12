@@ -239,13 +239,9 @@ Here there is:
 Understanding `stim.py` and `play.py` (or `play_3brain.py`) is sufficient to understand the core functionality provided by the package. And to get a good overview of the purpose and limitations of both of these, look at the `StimProgram` interface in `stim.py`. The whole codebase bifurcates around this interface: one side designs stimuli, and the other side presents them. If, in some code you write, you create a object that implements `StimProgram`, you can then hand it off to `play.py` or `play_3brain.py` and be confident that it will be presented correctly. 
 
 
-## Codebase, now and in the future
-If the project is to be more widely used, it would benefit from being reduced to a small core set of modules. The 3brain specific code has already been moved out into the `examples` folder, such as `examples/gui_cal_3brain.py`. It would be good to move out the other setup specific code, such as `src/fpspy/main.py`, so that the core package is just the reusable components. Furthermore, the stimulus generation code could also be moved out into a separate module or package, and possibly the `arduino.py` module too.
 
 
-## Interfaces
-
-### StimProgram
+## StimProgram
 A StimProgram offers a render(ctx, frame_idx) method. This will be called by each presenter on each frame. The StimProgram is responsible for setting screen pixel values by making OpenGL calls. There are currently 3 ways to create a StimProgram:
 
     1. Instantiate an TextureSequence object. This class takes in an array of 
@@ -260,9 +256,18 @@ A StimProgram offers a render(ctx, frame_idx) method. This will be called by eac
     array is a data file for a stimulus.
 
 
-### StimArray
+## StimArray
 StimArray plugs into a TextureSequence program. It serializes and deserializes the information needed to render a stimulus from a (T, H, W, C) array. For example, on what frames in [0, T) should a trigger be sent on? How many frames per second? Options like "zoom" allow a stimulus to be saved more compactly. Broadcasting of the channel dimension also reduces the array size for monochrome stimuli.
+
+
+## Script based (incl. shader) stimuli
+See `examples/shader_based_stimuli` for some stimuli that are loaded as directories with a Python script entrypoint. The shader approach is suitable for stimuli such as moving bars, where the stimulus cannot be easily compressed as an array.
+
+
   
+
+## Codebase, now and in the future
+If the project is to be more widely used, it would benefit from being reduced to a small core set of modules. The 3brain specific code has already been moved out into the `examples` folder, such as `examples/gui_cal_3brain.py`. It would be good to move out the other setup specific code, such as `src/fpspy/main.py`, so that the core package is just the reusable components. Furthermore, the stimulus generation code could also be moved out into a separate module or package, and possibly the `arduino.py` module too.
 
 ## Some unorganized notes
 
@@ -304,4 +309,10 @@ A further step worth taking is to accommodate a separation between stimulus data
 
 How to allow the specification of the channel masks ahead of time, and saving them so that stimuli can be easily replayed from self-contained files? We may not want a "Presentation" file that has a file pointer to a StimArray file. Instead, the Presentation file should contain all information, including the stimulus data. The solution might be more graceful if it naturally becomes supported by allowing for stimuli lists (play these X stimuli in this order, with these gaps between). Such a feature could have a channel mask. What is the dataum? I guess there would be an array of StimArrays, and a list like [0, 0, 0, 1, 1, 1, 2, 2, 3, 4, 5] would index into the array of stimuli to specify the order of presentation. Such an index list could be accompanied by a list of channel masks. The channel masks would be a presentation parameter, of which there could be various (such as speed or intensity). I think it would be important to be able to render a Presentation back into a single StimArray, as the StimArray should be able to represent any stimuli. This may be an unrealistic goal, as there are likely presentation options, like lightcrafter options or electrically tunable lens settings, that can't be represented by modifying the stimulus array, and instead are records of how some aspect of the light path is to be modified. Although, it's conceivable that ETL settings may with to be controlled per-frame, with associated trigger values, so really, it's not clear where we will end up with StimArray as being enough to replicate a stimulus presentation.
 
+
+## Troubleshooting
+
+
+### Dropped frames with 2 presenters
+If one presenter's window is behind the other, the compositor may notices that the behind window is not visible, and it can decide to reduce the framerate dramatically (e.g. to 1 Hz). So, if you are debugging with 2 presenters, make sure neither are occluded.
 
