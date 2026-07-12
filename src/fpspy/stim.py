@@ -36,6 +36,17 @@ CURRENT_HDF5_FORMAT_VER = "1"
 TEXTURE_FRAG_SHADER = "fragment_shader_colour.glsl"
 QUAD_VERTEX_SHADER = "vertex_shader.glsl"
 
+def quad_vertex_shader_src():
+    """Get the source code of the quad vertex shader.
+
+    Used by shader-based stimulus programs, like movingbar, which don't
+    need to reinvent the same vertex shader.
+    """
+    resource_dir = importlib.resources.files("fpspy.resources")
+    with (resource_dir / QUAD_VERTEX_SHADER).open("r") as f:
+        vert_src = f.read()
+    return vert_src
+
 
 def loop_triggers(triggers, n_frames, n_loops):
     trigger_repeats = [triggers]

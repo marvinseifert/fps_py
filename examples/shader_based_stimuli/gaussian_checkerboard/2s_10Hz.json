@@ -1,0 +1,9 @@
+{
+  "stim_shape": [768, 768],
+  "checker_size": 2,
+  "mean_u8": 128,
+  "std_u8": 42,
+  "base_seed": 12345,
+  "n_frames": 1200,
+  "fps": 10.0
+}
