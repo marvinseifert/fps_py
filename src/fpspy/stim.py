@@ -36,6 +36,17 @@ CURRENT_HDF5_FORMAT_VER = "1"
 TEXTURE_FRAG_SHADER = "fragment_shader_colour.glsl"
 QUAD_VERTEX_SHADER = "vertex_shader.glsl"
 
+def quad_vertex_shader_src():
+    """Get the source code of the quad vertex shader.
+
+    Used by shader-based stimulus programs, like movingbar, which don't
+    need to reinvent the same vertex shader.
+    """
+    resource_dir = importlib.resources.files("fpspy.resources")
+    with (resource_dir / QUAD_VERTEX_SHADER).open("r") as f:
+        vert_src = f.read()
+    return vert_src
+
 
 def loop_triggers(triggers, n_frames, n_loops):
     trigger_repeats = [triggers]
@@ -369,11 +380,19 @@ class StimArray:
         - (H, W) spatial dimensions, with (0, 0) corresponding to the top-left corner.
         - C channels
         - uint8 values in [0, 255]. The values are **not linear**, but interpreted as
-          sRGB values. The standard conversion from linear to sRGB is:
+          in whatever way the display device expects. In other words, the values will
+          be handed off to the display device as-is. The DLP4500 (which uses DLPC350)
+          has a built-in gamma curve, and you will need to convert linear values though
+          the inverse of that mapping to get linear outputs. For most other displays,
+          the values would be interpreted as sRGB or rec 709 values. It is up
+          to the creator of the StimArray to encode the values appropriately.
 
-          ```python
-          np.where(arr <= 0.0031308, arr * 12.92, 1.055 * (arr ** (1 / 2.4)) - 0.055)
-           ```
+          Storing linear values with more bits, such as float16 or float32, and then
+          converting to sRGB before sending to the display is possible; however, this
+          will increase the disk footprint and is not currently supported by StimArray.
+          This is quite an appealing feature, though. It would enable storing linear
+          values, and having the StimProgram convert them to the appropriate values
+          for each display device. This would make a created StimArray more portable.
 
           Nearly all displays (including the light crafters) expect these sRGB values
           as input and will automatically decode them, so it is a mistake to store
@@ -788,7 +807,7 @@ class StimArray:
         StimArray
             The stimulus object created from the HDF5 file.
         """
-        f = h5py.File(path, "r")#, rdcc_nbytes=10 * 1024 * 1024)  # 10MB chunk cache.
+        f = h5py.File(path, "r")  # , rdcc_nbytes=10 * 1024 * 1024)  # 10MB chunk cache.
         try:
             ver = f.attrs.get("format_version", "0")
             if ver == "0":
@@ -877,8 +896,9 @@ def _write_hdf5_v1(stim: StimArray, f, dataset_opts=None):
             # under 12 ms and no 20+ ms outliers. blosclz/lz4 decode faster on
             # already-cached data but have occasional 20+ ms tail latencies and
             # 12x larger files on this kind of stim.
-            **hdf5plugin.Blosc(cname="zstd", clevel=1, shuffle=hdf5plugin.Blosc.SHUFFLE),
-
+            **hdf5plugin.Blosc(
+                cname="zstd", clevel=1, shuffle=hdf5plugin.Blosc.SHUFFLE
+            ),
             # Alternatives, kept for reference:
             # **hdf5plugin.Blosc(cname="blosclz", clevel=5, shuffle=hdf5plugin.Blosc.SHUFFLE),
             #   ~2x larger files than zstd cl=9, slightly faster median (9.65 vs 9.81 ms)
@@ -1137,12 +1157,14 @@ def frame_times_from_hdf5_v1(f) -> np.ndarray:
 class StimProgram(Protocol):
     """Knows how to play each frame of a stimulus.
 
+    It's really just a `render()` function, with associated setup and teardown.
+
     Called by each Presenter instance in their presentation loop.
 
 
+    ## On Protocol and `...`
     Using typing's `Protocol` improves type checking and IDE support, but otherwise has
-    no effect.
-    For usage of Python's "..." see https://github.com/python/typing/issues/109
+    no effect. For usage of Python's "..." see https://github.com/python/typing/issues/109
     """
 
     def setup(
@@ -1180,19 +1202,61 @@ class StimProgram(Protocol):
             Whether to mirror the stimulus horizontally.
         rotation : int
             The rotation (degrees) to apply to the stimulus (after any mirror).
+        win_id : Optional[int]
+            The ID of the window this stimulus program will be presented on. If there
+            are multiple windows, then multiple program objects will be created and 
+            given different window IDs.
         """
         ...
 
-    def is_linear(self) -> bool:
-        """Return True if values are linear RGB, or False if sRGB.
+    def render(self, ctx, frame_idx, global_frame_num) -> None:
+        """Given a GL context, render the given frame."""
+        ...
 
-        It is assumed that the display will received sRGB values
+    def cleanup(self) -> None:
+        """An opportunity to clean up any resources."""
+        ...
+
+    def is_display_encoded(self) -> bool:
+        """Whether values are display-ready, or need gamma encoding & quantization first.
+
+        If False, it is assumed that the stimulus has already been fully processed,
+        and the presenter will not apply any further manipulation of the values before
+        sending them to the display. If False, the presenter is expected to apply gamma
+        encoding and quantization according to the display's properties (e.g. sRGB's
+        gamma curve for standard displays, or Texas Instrument's custom gamma curve for
+        their DLPs).
+
+        This feature is not yet used by presenter code (presenters currently do not
+        apply and encoding, and thus is_display_encoded is always True in effect).
+
+        There are a few reasons why this feature is important and should be implemented
+        in the future (and hence the forward-looking inclusion in the interface):
+
+            1. display_encoding always requires quantization to the display's bit depth.
+            Different displays have different bit depths, and even the same display may
+            have multiple bit depths. Allowing the presenter to do the quantization
+            allows a stimulus to be agnostic to the display's bit depth.
+            2. The gamma curve and color space can also vary between displays. Most
+            displays expect sRGB or Rec. 709 encoded values. Texas Instruments DLPs
+            expect sRGB values but with a custom gamma curve. Similar to the bit depth,
+            allowing the presenter to do the encoding allows a stimulus to be agnostic
+            to the display's color space and gamma curve.
+            3. Displays may require other unique processing. For example, the DLPs do
+            not have uniform illumination, and it is possible to correct for this
+            non-uniformity using measured calibration data. If this correction must
+            be applied to pre-encoded stimulus values, the values would first need to
+            be un-encoded (to a linear space), have the correction applied, and then
+            re-encoded. This has two problems: firstly, we lose precision compared to
+            if the values were never quantized in the first place, and secondly, this
+            requires having the presenter know the details of the stimulus encoding,
+            thus admitting that we cannot escape the presenter from being able to
+            display-encode a stimulus.
+
+        For the moment, you can simply implement this function by returning True.
         """
         ...
 
-    def render(self, ctx, frame_idx, global_frame_num) -> None: ...
-
-    def cleanup(self) -> None: ...
 
 
 # Just use from_script and from_hdf5. No need for protocol.
@@ -1517,12 +1581,12 @@ class MoviePlayer(StimProgram):
         self,
         movie_path: Path,
         zoom: float = 1.0,
-        is_linear: bool = False,
+        is_display_encoded: bool = True,
         label: Optional[str] = None,
     ) -> None:
         self.movie_path = Path(movie_path)
         self.zoom = zoom
-        self._is_linear = is_linear
+        self._is_display_encoded = is_display_encoded
         self.label = label if label is not None else self.movie_path.stem
 
         self.win_id = None
@@ -1589,9 +1653,7 @@ class MoviePlayer(StimProgram):
         self._width = self._stream.width
         self._height = self._stream.height
 
-        self._tex = ctx.texture(
-            (self._width, self._height), 3, samples=0, alignment=1
-        )
+        self._tex = ctx.texture((self._width, self._height), 3, samples=0, alignment=1)
         self._tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
 
         self._program = self._compile_program(ctx)
@@ -1635,9 +1697,9 @@ class MoviePlayer(StimProgram):
         #   * frame_idx == last  -> reuse the texture (display fps > stim fps).
         #   * frame_idx >  last  -> advance the iterator that many steps.
         #   * frame_idx <  last  -> loop wrap; seek to start and re-decode.
-        assert frame_idx < self._n_frames, (
-            f"Frame index out of bounds. {frame_idx=}, {self._n_frames=}"
-        )
+        assert (
+            frame_idx < self._n_frames
+        ), f"Frame index out of bounds. {frame_idx=}, {self._n_frames=}"
         if frame_idx < self._last_decoded_idx:
             self._container.seek(0, stream=self._stream)
             self._decoder_iter = self._make_iter()
@@ -1652,8 +1714,8 @@ class MoviePlayer(StimProgram):
         self._tex.use(location=self.TEXTURE_UNIT)
         self._vao.render(moderngl.TRIANGLES)
 
-    def is_linear(self) -> bool:
-        return self._is_linear
+    def is_display_encoded(self) -> bool:
+        return self._is_display_encoded
 
     def cleanup(self) -> None:
         if self._tex is not None:

@@ -613,7 +613,7 @@ class Presenter:
             arduino_colours,
             change_logic,
             end_times,
-            stim.fps,
+            stim.fps(allow_estimate=True),
         )
 
 

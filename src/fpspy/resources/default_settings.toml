@@ -2,7 +2,7 @@
 
 # --- Global settings ---
 gl_version = [4, 1]
-fps = 75
+fps = 60
 presentation_delay = 4
 
 # --- Arduino settings ---
@@ -32,7 +32,11 @@ mirror = false
 rotation = 0
 fullscreen = false
 style = "transparent"
+# The channels of the stimulus from which each RGB display channel draws from.
+# This could be [0, 0, 0] to have all outpus be equal to the (possibly only)
+# first channel.
 channels = [0, 1, 2]
+# Color to display when stimulus is not playing.
 # RGB values will be interpreted as sRGB by the monitor. 
 clear_rgba = [0.73, 0.73, 0.73, 1.0]
 

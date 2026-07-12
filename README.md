@@ -27,7 +27,6 @@ The first setup, while limited to monochrome stimuli, can smoothly present stimu
 The codebase has separate features for each setup, for example, separate `main.py` and `main_3brain.py` entry points (the former being the single projector setup). Despite this bifurcation, there is a shared core set of functionality, primarily the `stim.py` module, where the `StimProgram` and `StimArray` abstractions are defined.
 
 
-This repository contains files for the pynoise package. The package is a collection of functions for generating noise. 
 
 
 # Manual
@@ -234,15 +233,15 @@ Here there is:
     - Better exception handling
 
 
-# Design notes
+# Codebase overview
 
-## Simplifying the codebase
-If the project is to be more widely used, it would benefit from being reduced to a small core set of modules. The 3brain specific code has already been moved out into the `examples` folder, such as `examples/gui_cal_3brain.py`. It would be good to move out the other setup specific code, such as `src/fpspy/main.py`, so that the core package is just the reusable components. Furthermore, the stimulus generation code could also be moved out into a separate package, and probably the `arduino.py` module too.
+## `stim.py` connects to `play.py` through the `StimProgram` interface
+Understanding `stim.py` and `play.py` (or `play_3brain.py`) is sufficient to understand the core functionality provided by the package. And to get a good overview of the purpose and limitations of both of these, look at the `StimProgram` interface in `stim.py`. The whole codebase bifurcates around this interface: one side designs stimuli, and the other side presents them. If, in some code you write, you create a object that implements `StimProgram`, you can then hand it off to `play.py` or `play_3brain.py` and be confident that it will be presented correctly. 
 
 
-## Interfaces
 
-### StimProgram
+
+## StimProgram
 A StimProgram offers a render(ctx, frame_idx) method. This will be called by each presenter on each frame. The StimProgram is responsible for setting screen pixel values by making OpenGL calls. There are currently 3 ways to create a StimProgram:
 
     1. Instantiate an TextureSequence object. This class takes in an array of 
@@ -257,23 +256,22 @@ A StimProgram offers a render(ctx, frame_idx) method. This will be called by eac
     array is a data file for a stimulus.
 
 
-### StimArray
+## StimArray
 StimArray plugs into a TextureSequence program. It serializes and deserializes the information needed to render a stimulus from a (T, H, W, C) array. For example, on what frames in [0, T) should a trigger be sent on? How many frames per second? Options like "zoom" allow a stimulus to be saved more compactly. Broadcasting of the channel dimension also reduces the array size for monochrome stimuli.
+
+
+## Script based (incl. shader) stimuli
+See `examples/shader_based_stimuli` for some stimuli that are loaded as directories with a Python script entrypoint. The shader approach is suitable for stimuli such as moving bars, where the stimulus cannot be easily compressed as an array.
+
+
   
 
-## Channel mask
-I think that a channel mask should be allowed to be specified in combination with a stimulus array, and that the combination of these two pieces of information should be required to know what was presented. This would imply that the stimulus array alone is not enough to record the stimulus presented. 
+## Codebase, now and in the future
+If the project is to be more widely used, it would benefit from being reduced to a small core set of modules. The 3brain specific code has already been moved out into the `examples` folder, such as `examples/gui_cal_3brain.py`. It would be good to move out the other setup specific code, such as `src/fpspy/main.py`, so that the core package is just the reusable components. Furthermore, the stimulus generation code could also be moved out into a separate module or package, and possibly the `arduino.py` module too.
 
-This will significantly reduce the storage space required for stimuli, and reduce the save and load times stimuli, as many stimuli share the same grayscale data but differ in terms of which LEDs are used.
+## Some unorganized notes
 
-A half-way solution is to allow a channel mask to be specified in a StimArray; however, this would still mean that the grayscale pattern needs to be duplicated an a (T, H, W, 1) array for each channel mask pattern. This would save having to save (T, H, W, C) arrays for each pattern, which is an improvement, but the fact that there is still duplication suggests that the channel mask does not belong in the StimArray.
-
-A further step worth taking is to accommodate a separation between stimulus data and presentation parameters. Currently, the StimArray alone is enough to know what was presented; however, making it so that StimArray+presentation_params are needed would allow a single (T, H, W, 1) StimArray file to be used for all combinations of channel masks. 
-
-How to allow the specification of the channel masks ahead of time, and saving them so that stimuli can be easily replayed from self-contained files? We may not want a "Presentation" file that has a file pointer to a StimArray file. Instead, the Presentation file should contain all information, including the stimulus data. The solution might be more graceful if it naturally becomes supported by allowing for stimuli lists (play these X stimuli in this order, with these gaps between). Such a feature could have a channel mask. What is the dataum? I guess there would be an array of StimArrays, and a list like [0, 0, 0, 1, 1, 1, 2, 2, 3, 4, 5] would index into the array of stimuli to specify the order of presentation. Such an index list could be accompanied by a list of channel masks. The channel masks would be a presentation parameter, of which there could be various (such as speed or intensity). I think it would be important to be able to render a Presentation back into a single StimArray, as the StimArray should be able to represent any stimuli. This may be an unrealistic goal, as there are likely presentation options, like lightcrafter options or electrically tunable lens settings, that can't be represented by modifying the stimulus array, and instead are records of how some aspect of the light path is to be modified. Although, it's conceivable that ETL settings may with to be controlled per-frame, with associated trigger values, so really, it's not clear where we will end up with StimArray as being enough to replicate a stimulus presentation.
-
-
-## Stimulus chaining and looping
+### Stimulus chaining and looping
 It would be nice to be able to run:
 
 ```bash
@@ -295,7 +293,26 @@ main_3brain.py --delay 5 stimulus2.py
 main_3brain.py --delay 5 stimulus3.h5
 ```
 
-If the script based approach is reasonable, then whatever functionality we add to support the related need to run different channel masks for a single monochrome stimulus, it doesn't need to operate on the level of StimPrograms, but instead only needs to support the TextureSequence program. This is good in the sense that we don't need to make the high-level StimProgram interface any more complex. If StimArray's purpose is to be a self-contained record of a what a TextureSequence program should present, then this line of reasoning suggests that the channel mask properties should belong in a StimArray, rather than being a separate Presenter parameter that is passed concurrently with the StimArray.
+
+### Channel mask belongs in (is isoloted to) StimArray
+The need to repeat a pattern for different LED combinations eventuates using some concept of a channel mask or list. You create one "pattern" and pair it with a list where each element describes the LEDs needed for each separate usage of the pattern. The channel mask is "data" in the same way that the pattern is data. When the StimArray class was being designed (the first StimProgram), it was debated as to whether StimArray would own the channel mask, or whether the channel mask would be given to the presenter separately. We opted to keep it internal to the StimArray. 
 
 
+#### Previous thoughts leading to this decision
+I think that a channel mask should be allowed to be specified in combination with a stimulus array, and that the combination of these two pieces of information should be required to know what was presented. This would imply that the stimulus array alone is not enough to record the stimulus presented. 
+
+This will significantly reduce the storage space required for stimuli, and reduce the save and load times, as many stimuli share the same grayscale data but differ in terms of which LEDs are used.
+
+A half-way solution is to allow a channel mask to be specified in a StimArray; however, this would still mean that the spatial pattern needs to be duplicated an a (T, H, W, 1) array for each channel pattern. This would save having to save (T, H, W, C) arrays for each pattern, which is an improvement, but the fact that there is still duplication suggests that the channel mask does not belong in the StimArray.
+
+A further step worth taking is to accommodate a separation between stimulus data and presentation parameters. Currently, the StimArray alone is enough to know what was presented; however, making it so that StimArray+presentation_params are needed would allow a single (T, H, W, 1) StimArray file to be used for all combinations of channel masks. 
+
+How to allow the specification of the channel masks ahead of time, and saving them so that stimuli can be easily replayed from self-contained files? We may not want a "Presentation" file that has a file pointer to a StimArray file. Instead, the Presentation file should contain all information, including the stimulus data. The solution might be more graceful if it naturally becomes supported by allowing for stimuli lists (play these X stimuli in this order, with these gaps between). Such a feature could have a channel mask. What is the dataum? I guess there would be an array of StimArrays, and a list like [0, 0, 0, 1, 1, 1, 2, 2, 3, 4, 5] would index into the array of stimuli to specify the order of presentation. Such an index list could be accompanied by a list of channel masks. The channel masks would be a presentation parameter, of which there could be various (such as speed or intensity). I think it would be important to be able to render a Presentation back into a single StimArray, as the StimArray should be able to represent any stimuli. This may be an unrealistic goal, as there are likely presentation options, like lightcrafter options or electrically tunable lens settings, that can't be represented by modifying the stimulus array, and instead are records of how some aspect of the light path is to be modified. Although, it's conceivable that ETL settings may with to be controlled per-frame, with associated trigger values, so really, it's not clear where we will end up with StimArray as being enough to replicate a stimulus presentation.
+
+
+## Troubleshooting
+
+
+### Dropped frames with 2 presenters
+If one presenter's window is behind the other, the compositor may notices that the behind window is not visible, and it can decide to reduce the framerate dramatically (e.g. to 1 Hz). So, if you are debugging with 2 presenters, make sure neither are occluded.
 

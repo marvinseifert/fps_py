@@ -21,6 +21,11 @@ uniform uint frame_num;        // updated each frame
 uniform int mean_u8;
 uniform int std_u8;
 
+// Which noise streams this window's R, G, B outputs draw from. Windows showing
+// different channel sets (e.g. two DLPs covering channels 0-2 and 3-5) get
+// independent noise.
+uniform ivec3 channel_ids;
+
 // --- MurmurHash3 fmix32 (public-domain style finalizer) ---
 uint fmix32(uint h) {
     h ^= h >> 16;
@@ -93,10 +98,10 @@ void main() {
     uint cx = uint(int(pix.x) / checker_size);
     uint cy = uint(int(pix.y) / checker_size);
 
-    // Independent RGB streams (channel 0/1/2)
-    int r8 = intensity_u8(frame_num, cx, cy, 0u, base_seed);
-    int g8 = intensity_u8(frame_num, cx, cy, 1u, base_seed);
-    int b8 = intensity_u8(frame_num, cx, cy, 2u, base_seed);
+    // Independent RGB streams.
+    int r8 = intensity_u8(frame_num, cx, cy, uint(channel_ids.x), base_seed);
+    int g8 = intensity_u8(frame_num, cx, cy, uint(channel_ids.y), base_seed);
+    int b8 = intensity_u8(frame_num, cx, cy, uint(channel_ids.z), base_seed);
 
     vec3 rgb = vec3(r8, g8, b8) * (1.0 / 255.0);
     out_color = vec4(rgb, 1.0);

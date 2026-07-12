@@ -1,3 +1,6 @@
+"""
+Allow loading and saving of options from a TOML config file, with default fallbacks.
+"""
 import importlib.resources
 from pathlib import Path
 import platformdirs

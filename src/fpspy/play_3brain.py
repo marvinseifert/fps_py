@@ -83,11 +83,11 @@ def probe_default_fbo_srgb() -> tuple[bool, bool]:
 
 def _wait_or_skip(target_time, next_frame_time: Optional[float], fps):
     """Semi-busy-wait for the frame time, or possibly skip to next frame."""
-    max_busy_wait_ms = 0.002
+    max_busy_wait_sec = 0.002
     now = time.perf_counter()
     remaining = target_time - now
     if remaining <= 0:
-        _logger.warning(f"{target_time=} already passed, {now=}.")
+        _logger.warning(f"{target_time=} sec already passed, {now=} sec.")
         has_next_frame = next_frame_time is not None
         if not has_next_frame:
             return False
@@ -98,8 +98,8 @@ def _wait_or_skip(target_time, next_frame_time: Optional[float], fps):
             _logger.warning("Skipping to next frame.")
             return True
         return False
-    if remaining > max_busy_wait_ms:
-        time.sleep(remaining - max_busy_wait_ms)
+    if remaining > max_busy_wait_sec:
+        time.sleep(remaining - max_busy_wait_sec)
     while time.perf_counter() < target_time:
         pass
     return False
@@ -825,5 +825,5 @@ def start_presenter_processes(config, out_dir, delay, enable_triggers, log_level
         p.start()
         processes.append(p)
         # Delay slightly to increase consistency of the window order in the OS.
-        time.sleep(0.005) 
+        time.sleep(0.005)
     return processes, cmd_queues, status_queue

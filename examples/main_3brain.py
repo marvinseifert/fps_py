@@ -50,6 +50,12 @@ def play(
         f"config from {fpspy.config.user_config_dir()}. If that fails, an "
         "bundled default is used.",
     ),
+    stim_config_path: Optional[Path] = typer.Option(
+        None,
+        "--stim-config",
+        "-s",
+        help="Optional config file (arbitrary text file) for the stimulus program.",
+    ),
     loops: int = typer.Option(
         1,
         "--loops",
@@ -107,11 +113,27 @@ def play(
         delay = fpspy.config.get_presentation_delay(config)
     if out_dir is None:
         out_dir = fpspy.config.create_outdir(config)
-
     _logger.info(f"{out_dir} [output dir]")
 
     if stim_path.suffix.lower() == ".h5":
+        # Some extra features for HDF5 stimuli (TextureSequence programs).
+        # They get a preview:
         _preview_h5_stim(stim_path, loops)
+        # And we allow configuring lazy loading via cmdline option.
+        # Of which that's the only current option, so we don't even bother with a
+        # config file for now.
+        stim_config = json.dumps({"lazy_textures": lazy_textures})
+    else:
+        # Not a TextureSequence program, so no special options. Need to load the 
+        # stimulus config file, if provided.
+        if stim_config_path is not None:
+            with stim_config_path.open("r", encoding="utf-8") as f:
+                stim_config = f.read()
+        else:
+            stim_config = None
+
+
+    # Currently, only TextureSequence takes an option (lazy_textures).
 
     # Create a reference time point.
     t0 = time.perf_counter()
@@ -123,15 +145,13 @@ def play(
         )
     )
     play_cmd = "play"
-    # Currently, only TextureSequence takes an option (lazy_textures).
-    stim_config = {"lazy_textures": lazy_textures}
     # Create queues for inter-process communication.
     for queue in cmd_queues:
         fpspy.queue.put_onto(
             queue,
             play_cmd,
             stim_path=stim_path,
-            stim_config=json.dumps(stim_config),
+            stim_config=stim_config,
             loops=loops,
             t0=t0,
             close_after=True,
