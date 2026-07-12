@@ -369,18 +369,20 @@ class StimArray:
         - (H, W) spatial dimensions, with (0, 0) corresponding to the top-left corner.
         - C channels
         - uint8 values in [0, 255]. The values are **not linear**, but interpreted as
-          sRGB values. The standard conversion from linear to sRGB is:
+          in whatever way the display device expects. In other words, the values will
+          be handed off to the display device as-is. The DLP4500 (which uses DLPC350)
+          has a built-in gamma curve, and you will need to convert linear values though
+          the inverse of that mapping to get linear outputs. For most other displays,
+          the values would be interpreted as sRGB or rec 709 values. It is up
+          to the creator of the StimArray to encode the values appropriately.
 
-          ```python
-          np.where(arr <= 0.0031308, arr * 12.92, 1.055 * (arr ** (1 / 2.4)) - 0.055)
-           ```
+          Storing linear values with more bits, such as float16 or float32, and then
+          converting to sRGB before sending to the display is possible; however, this
+          will increase the disk footprint and is not currently supported by StimArray.
+          This is quite an appealing feature, though. It would enable storing linear
+          values, and having the StimProgram convert them to the appropriate values
+          for each display device. This would make a created StimArray more portable.
 
-          Nearly all displays (including the light crafters) expect these sRGB values
-          as input and will automatically decode them, so it is a mistake to store
-          stimuli with a linear scale. Storing linear values with more bits, such as
-          float16 or float32, and then converting to sRGB before sending to the display
-          is possible; however, this will increase the disk footprint and is not
-          currently supported by StimArray.
 
     It is important to note that OpenGL textures have (0, 0) correspond to the
     bottom-left. The TextureSequence stimulus program will vertically flip frames in
