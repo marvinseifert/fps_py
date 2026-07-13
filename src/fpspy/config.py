@@ -2,6 +2,7 @@
 Allow loading and saving of options from a TOML config file, with default fallbacks.
 """
 import importlib.resources
+import os
 from pathlib import Path
 import platformdirs
 import logging
@@ -140,12 +141,12 @@ def _resolve_paths(config: dict) -> dict:
     log_dir_str = paths.get("log_dir", "").strip()
 
     if data_dir_str:
-        data_dir = Path(data_dir_str).expanduser()
+        data_dir = Path(os.path.expandvars(data_dir_str)).expanduser()
     else:
         # fallback to system user data dir
         data_dir = default_data_dir()
     if log_dir_str:
-        log_dir = Path(log_dir_str).expanduser()
+        log_dir = Path(os.path.expandvars(log_dir_str)).expanduser()
     else:
         # fallback to system user log dir
         log_dir = default_log_dir()
@@ -154,6 +155,33 @@ def _resolve_paths(config: dict) -> dict:
     paths["data_dir"] = str(data_dir)
     paths["log_dir"] = str(log_dir)
     return config
+
+def _expand_path_str(value: str, mapping: dict[str, str]) -> str:
+      # $HOME, %USERPROFILE%
+      value = os.path.expandvars(value)
+      # ~
+      value = os.path.expanduser(value)          
+      for token, replacement in mapping.items():
+          value = value.replace("{" + token + "}", replacement)
+      return value
+
+def _expand_config_paths(config: dict) -> dict:
+    mapping = {
+            "data_dir": config["paths"]["data_dir"],
+            "log_dir": config["paths"]["log_dir"],
+            "config_dir": str(user_config_dir()),
+    }
+    def walk(d):
+        for key, val in d.items():
+            # Don't expand [paths] section.
+            skip = key == "paths"
+            if not skip and isinstance(val, dict):
+                walk(val)
+            elif isinstance(val, str):
+                if key.endswith("_path") or key.endswith("_dir"):
+                    d[key] = _expand_path_str(val, mapping)
+        return d
+    return walk(config)
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -229,6 +257,7 @@ def load_config(path: Optional[Path] = None, overrides: Optional[dict] = None) -
     # 4.
     config = _apply_window_defaults(config)
     config = _resolve_paths(config)
+    config = _expand_config_paths(config)
     _logger.info(f"Effective config (toml):\n{config_to_str(config)}")
     return config
 
