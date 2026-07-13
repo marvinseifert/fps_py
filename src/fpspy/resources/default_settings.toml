@@ -31,14 +31,23 @@ window_size = [500, 500] # (W,H)
 mirror = false
 rotation = 0
 fullscreen = false
+# moderngl_window sets this as a property of the window, which, if using pyglet 
+# underneath, then it is interpreted as described here:
+# https://pyglet.readthedocs.io/en/latest/programming_guide/windowing.html#window-style
+# Alternative styles: borderless, dialog, overlay, tool
 style = "transparent"
 # The channels of the stimulus from which each RGB display channel draws from.
 # This could be [0, 0, 0] to have all outpus be equal to the (possibly only)
 # first channel.
 channels = [0, 1, 2]
 # Color to display when stimulus is not playing.
-# RGB values will be interpreted as sRGB by the monitor. 
-clear_rgba = [0.73, 0.73, 0.73, 1.0]
+# Values are specified in the display's encoding (e.g. sRGB for a monitor, or
+# TI's video-enhanced for a DLP4500).
+# For sRGB monitors, 50% is 0.73.
+# clear_rgba = [0.73, 0.73, 0.73, 1.0]
+# For a DLP4500, 50% is 0.664 (3 dp)
+clear_rgba = [0.0.664, 0.664, 0.664, 1.0]
+
 
 [windows."1"]
 # -- shift is an offset from (0,0) at bottom left. 
