@@ -1,0 +1,1 @@
+{"stim_shape": [500, 500], "n_channels": 3, "thickness": 10.0, "n_directions": 8, "speed": 2.0, "start_buffer_px": 5.0, "fps": 60.0}
