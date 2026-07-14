@@ -119,7 +119,7 @@ def decompress_triggers(triggers, n_frames):
     return trigger_array
 
 
-def delay(s_frames, delay):
+def delay(s_frames, delay_t):
     """Add a delay to the frame schedule.
 
     The delay must be such that the first frame is still in the future.
@@ -129,7 +129,10 @@ def delay(s_frames, delay):
     s_frames : np.ndarray
         Frame schedule with added delay.
     """
-    s_frames = s_frames + delay
+    delay_needed = s_frames[0] - time.perf_counter()
+    if delay_needed < 0:
+        delay_t = np.abs(delay_needed) + delay_t
+    s_frames = s_frames + delay_t
     if s_frames[0] <= time.perf_counter():
         raise Exception("Failed to start stimulus in time. Increased delay needed.")
     return s_frames
@@ -744,7 +747,7 @@ class StimArray:
             if not has_mask and not requesting_only_ch0:
                 raise ValueError(
                     f"Frames has shape {self._frames.shape}, but requesting channels "
-                    "{channels}."
+                    f"{channels}."
                 )
             # Frames is used as-is.
             new_frames = self._frames
@@ -1370,9 +1373,9 @@ class TextureSequence(StimProgram):
 
         # Load textures
         N, F, H, W, C_all = self.stim_arr.shape
-        C = len(channels) if channels is not None else C_all
-        if C > 4:
-            raise ValueError(f"Too many channels requested. {C=}. Max for GLSL 4.")
+        C = len(set(channels)) if channels is not None else C_all
+        if C > 3:
+            raise ValueError(f"Too many channels requested. {C=}. Max for GLSL RGB values is 3.")
         if not self.lazy_textures:
             # Create textures for all frames.
             self.textures = []
@@ -1426,12 +1429,12 @@ class TextureSequence(StimProgram):
         # TODO: zoom!
         if self.lazy_textures:
             N, F, H, W, C_all = self.stim_arr.shape
-            C = 3  # always RGB.
+            #C = 3  # always RGB.
             assert frame_idx < N * F, f"Index out of bounds. {frame_idx=}, {N=}, {F=}"
             if self.single_tex is None:
                 self.single_tex = ctx.texture(
                     (W, H),
-                    C,
+                    C_all,
                     samples=0,
                     alignment=1,
                 )
@@ -1730,3 +1733,20 @@ class MoviePlayer(StimProgram):
         if self._container is not None:
             self._container.close()
             self._container = None
+
+
+
+def validate_stim(stim_path, stim_config) -> bool:
+    """Run checks on the stimulus before sending to presenter processes.
+
+    Currently, it's just loading the program.
+
+    Returns False on sucess, True on error.
+    """
+    try:
+        prog = create_program(stim_path, stim_config)
+    except Exception as e:
+        _logger.error(f"Failed to load stimulus program:\n{e}")
+        #print(f"Failed to load stimulus program:\n{e}")
+        return True
+    return False
