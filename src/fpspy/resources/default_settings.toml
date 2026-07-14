@@ -1,5 +1,27 @@
 # Default settings loaded by main.py:cli_main if no custom settings are provided.
 
+# For path settings, the config loader defines expand codes to make it easy to
+# specify certain directories. 
+#
+# Standard expansions
+# -------------------
+# It will expand standard codes like "$HOME" and "~" on Linux and
+# "%USERPROFILE%" on Windows. 
+
+# Custom expansions
+# -----------------
+# For all paths excluding those in [paths], the loader will expand:
+#
+#   - {data_dir}
+#   - {config_dir}
+#   - {log_dir}
+#
+# Which can be used like:
+#
+#    intenisty_map_path = "{config_dir}/dlp4500_v2-5-0-0.npy"
+#
+# Paths in [path] don't use these expanders so as to avoid recursion.
+
 # --- Global settings ---
 gl_version = [4, 1]
 fps = 60
@@ -15,8 +37,13 @@ trigger_command = "T"
 
 [paths]
 # Override if you want to work from non-default directory for stimuli etc.
-data_dir = ""
-log_dir = ""
+# Where to 
+# data_dir = ~/
+
+# Where logs are stored.
+# The default is the system default location. E.g., on Ubuntu, this is:
+#     ~/.local/state/fpspy/log
+# log_dir = ""
 
 # --- Window definitions ---
 [windows.default]
@@ -24,6 +51,7 @@ log_dir = ""
 # For example, if a 1080p monitor is in portrait mode, it should have a (W,H)
 # shape of (1080, 1920). 
 window_size = [500, 500] # (W,H)
+
 # How to transform the stimuli to match the window.
 #  - mirror horizontally, then
 #  - rotate (by degrees)
@@ -31,14 +59,53 @@ window_size = [500, 500] # (W,H)
 mirror = false
 rotation = 0
 fullscreen = false
+
+# moderngl_window sets this as a property of the window, which, if using pyglet 
+# underneath, then it is interpreted as described here:
+# https://pyglet.readthedocs.io/en/latest/programming_guide/windowing.html#window-style
+# Alternative styles: borderless, dialog, overlay, tool
 style = "transparent"
+
 # The channels of the stimulus from which each RGB display channel draws from.
 # This could be [0, 0, 0] to have all outpus be equal to the (possibly only)
 # first channel.
 channels = [0, 1, 2]
+
 # Color to display when stimulus is not playing.
-# RGB values will be interpreted as sRGB by the monitor. 
-clear_rgba = [0.73, 0.73, 0.73, 1.0]
+# Values are specified in the display's encoding (e.g. sRGB for a monitor, or
+# TI's video-enhanced for a DLP4500).
+# For sRGB monitors, 50% is 0.73.
+# clear_rgba = [0.73, 0.73, 0.73, 1.0]
+# For a DLP4500, 50% is 0.664 (3 dp)
+clear_rgba = [0.664, 0.664, 0.664, 1.0]
+
+# This setting only has an effect if you end up using the presenter's follow-up
+# render steps. The two-step render is a feature that allows stimuli to be 
+# created agnostic to display properties such as encoding and any other 
+# calibration. Intensity correction maps for the DLP-4500 is one very useful
+# feature that the two-step rendering supports. If two-step rendering is used
+# for any reason, the encoding must be specified, so that the final render 
+# can encode the values into the form expected by the display. If two-step
+# rendering is not used (the default), then this encoding setting will have no
+# effect.
+#     Displays assume you are sending values in some encoding, which typically
+# means a value, x, is an exponent, for example, displayed_value = 2.2^x, where
+# in this case the projector decodes your value by raising 2.2 to the power of
+# the value. The preponderance of displays will decode your values according to
+# the color encoding associated with sRGB or the very similar encoding of Rec.
+# 709. TI lightcrafters; however, have their own custom encoding. The gamma
+# curve for DLP-4500 is TI's "enhanced-video" and looks like a sigmoid curve.
+# Currently, there is a fixed set of three supported encodings. A mechanism for
+# specifying custom encodings would make fpspy usable for other setups.
+# Possible values: "srgb", "identity", "ti-video-enhanced". If encoding is not 
+# specified, it is interpreted as "identity" i.e. an identity map (no-op).
+# encoding = "identity"
+
+# Path to an intensity map used to correct unevenness in a display.
+# intensity_map_path = "~/config/fpspy/proj_b_intensity_map.npy"
+# or, using expansion:
+## intensity_map_path = "{config_dir}/proj_b_intensity_map.npy"
+
 
 [windows."1"]
 # -- shift is an offset from (0,0) at bottom left. 

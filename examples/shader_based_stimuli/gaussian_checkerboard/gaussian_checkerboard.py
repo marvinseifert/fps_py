@@ -102,6 +102,10 @@ class GaussianCheckerboardProgram(fpspy.stim.StimProgram):
         self._vao = None
         self._vbo = None
 
+    def is_display_encoded(self) -> bool:
+        """This stim is linear float, with no gamma encoding or intensity correction."""
+        return False
+
 
 def default_params() -> dict:
     return {

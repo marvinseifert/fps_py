@@ -479,11 +479,11 @@ class CalibrationGui(QMainWindow):
                 first_response = response
         return first_response
 
-    def load_stimulus(self, stim_path: Path):
+    def load_stimulus(self, stim_path: Path, stim_config):
         """Load a stimulus file."""
         self.update_status(f"Loading {stim_path.name}...")
 
-        self.send_to_all("load", stim_path=stim_path, stim_config=None, loops=1)
+        self.send_to_all("load", stim_path=stim_path, stim_config=stim_config, loops=1)
 
         try:
             response = self.wait_for_responses(timeout=30)
@@ -747,6 +747,7 @@ def qt_app(
     cmd_queues: list[mp.Queue],
     status_queue: mp.Queue,
     stim_path: Path,
+    stim_config: Optional[str] = None
 ):
     """
     Create the Qt GUI and run the event loop.
@@ -777,7 +778,7 @@ def qt_app(
     window.show()
 
     # Load stimulus on startup (slight delay to let window show)
-    QTimer.singleShot(100, lambda: window.load_stimulus(stim_path))
+    QTimer.singleShot(100, lambda: window.load_stimulus(stim_path, stim_config))
 
     app.exec()
 
@@ -795,6 +796,12 @@ def cal_gui(
         help="Path to the TOML configuration file. If omitted, try loading user"
         f"config from {fpspy.config.user_config_dir()}. If that fails, an "
         "bundled default is used.",
+    ),
+    stim_config_path: Optional[Path] = typer.Option(
+        None,
+        "--stim-config",
+        "-s",
+        help="Optional config file (arbitrary text file) for the stimulus program.",
     ),
     out_dir: Optional[Path] = typer.Option(
         None,
@@ -828,16 +835,28 @@ def cal_gui(
         raise typer.Exit(1)
 
     config = fpspy.config.load_config(config_path)
-    # Currently, only TextureSequence takes an option (lazy_textures).
-    stim_config = {"lazy_textures": True}
-    is_err = fpspy.play_3brain.validate_stim(stim_path, json.dumps(stim_config))
-    if is_err:
-        raise typer.Exit(1)
-
     if out_dir is None:
         out_dir = fpspy.config.create_outdir(config)
     out_dir.mkdir(parents=False, exist_ok=True)
     _logger.info(f"{out_dir} [output dir]")
+
+    # Currently, only TextureSequence takes an option (lazy_textures).
+    if stim_path.suffix.lower() == ".h5":
+        # We allow configuring lazy loading via cmdline option. Of which that's the only
+        # current option, so we don't even bother with a config file for now.
+        stim_config = json.dumps({"lazy_textures": True})
+    else:
+        # Not a TextureSequence program, so no special options. Need to load the 
+        # stimulus config file, if provided.
+        if stim_config_path is not None:
+            with stim_config_path.open("r", encoding="utf-8") as f:
+                stim_config = f.read()
+        else:
+            stim_config = None
+    is_err = fpspy.play_3brain.validate_stim(stim_path, stim_config)
+    if is_err:
+        raise typer.Exit(1)
+
 
     # We add subdirectory based on stimulus filename
     stim_stem = stim_path.stem

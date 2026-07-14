@@ -11,6 +11,7 @@ import csv
 import datetime
 import logging
 from pathlib import Path
+import importlib
 import time
 from typing import Callable, Optional, Literal
 import multiprocessing as mp
@@ -105,6 +106,231 @@ def _wait_or_skip(target_time, next_frame_time: Optional[float], fps):
     return False
 
 
+def make_encode_lut(encoding: str, n: int = 1024) -> np.ndarray:
+    """Build a lookup table mapping linear [0,1] to display input values [0,1].
+
+    Parameters
+    ----------
+    encoding : str
+        - "identity": no mapping to be applied.
+        - "srgb"
+        - "ti-video-enhanced": inverse of the DLP4500's "TI Video (Enhanced)"
+          curve, so that displayed intensity ends up linear in our values.
+    n : int
+        Number of table entries.
+
+    Returns
+    -------
+    np.ndarray
+        (n,) float32, lut[i] = display input for linear value i/(n-1).
+    """
+    supported_encodings = {"identity", "srgb", "ti-video-enhanced"}
+    if encoding not in supported_encodings:
+        raise UnsupportedOperation(
+            f"Unsupported encoding '{encoding}'. Supported: {supported_encodings}"
+        )
+    ramp = np.linspace(0.0, 1.0, n)
+    if encoding == "identity":
+        lut = ramp
+    elif encoding == "srgb":
+        lut = fpspy.color.to_srgb(ramp)
+    elif encoding == "ti-video-enhanced":
+        resource_dir = importlib.resources.files("fpspy.resources")
+        with (resource_dir / DLP4500_GAMMA_RESOURCE).open("r") as f:
+            table = json.load(f)
+        xs = np.asarray(table["x"])  # display input
+        ys = np.asarray(table["y"])  # displayed intensity (linear)
+        if np.any(np.diff(xs) < 0) or np.any(np.diff(ys) < 0):
+            raise ValueError(f"Gamma table {DLP4500_GAMMA_RESOURCE} not monotonic.")
+        # Invert the forward table: for each linear target, the input producing it.
+        lut = np.interp(ramp, ys, xs)
+    else:
+        assert False, f"Unsupported encoding {encoding}"
+    return lut.astype(np.float32)
+
+
+class DisplayAdapter:
+    """GPU post-processing pass adapting stimulus output for a display.
+
+    Runs decode -> intensity correction -> clip -> encode (see module docstring).
+    Intensity correction is skipped by passing intensity_map=None; the other
+    stages are configured by `is_stim_linear`, `clip_mode` and `encoding`.
+
+    Usage:
+        adapter = DisplayAdapter(ctx, width, height, intensity_map, encoding)
+        # In render loop:
+        adapter.fbo.use()            # render stimulus into the FBO
+        ... render stimulus ...
+        adapter.render(ctx)           # draw adapted result to current framebuffer
+        # Cleanup:
+        adapter.release()
+    """
+
+    # Post-processing shaders for the display-adaptation pass.
+    VERTEX_SHADER = "display_adapter_vertex_shader.glsl"
+    FRAGMENT_SHADER = "display_adapter_fragment_shader.glsl"
+
+    STIM_TEX_UNIT = 0
+    IMAP_TEX_UNIT = 1
+    LUT_TEX_UNIT = 2
+
+    CLIP_MODES = {"pixel_rescale": 0, "clip": 1, "none": 2}
+
+    def __init__(
+        self,
+        ctx: moderngl.Context,
+        width: int,
+        height: int,
+        encoding: str,
+        intensity_map: Optional[np.ndarray] = None,
+        intensity_prescale: float = 1.0,
+        clip_mode: str = "pixel_rescale",
+        logger: Optional[logging.Logger] = None
+    ):
+        """
+        Parameters
+        ----------
+        ctx : moderngl.Context
+        width, height : int
+            Framebuffer dimensions (should match window size).
+        intensity_map : np.ndarray or None
+            (H, W, 3) float32 array in [0, 1], where 1.0 = full intensity.
+            H, W should match the stimulus dimensions (will be resampled by
+            the GPU's texture sampler if sizes differ). None disables intensity
+            correction (a 1x1 map of ones is used, making the division a no-op).
+        encoding : str
+            The display's transfer curve; one of ENCODINGS. See make_encode_lut.
+        intensity_prescale : float
+            Multiplier applied before the intensity division. Values < 1.0
+            leave room for the correction to boost dim regions without
+            clipping past 1.0.
+        clip_mode : str
+            How to handle corrected values > 1.0:
+            - "pixel_rescale": scale all channels by max channel (preserves hue)
+            - "clip": hard clamp to [0, 1]
+            - "none": pass through unclamped (encode still clamps to [0, 1])
+        logger:
+            If you want the DisplayAdapter to use the the presenter's logger, pass it
+            in. Otherwise, it will use the module's logger.
+        """
+        if clip_mode not in self.CLIP_MODES:
+            raise ValueError(f"clip_mode must be one of {list(self.CLIP_MODES)}")
+        self.encoding = encoding
+        self.intensity_prescale = intensity_prescale
+        self.clip_mode = clip_mode
+        self.logger = logger or _logger
+
+        # FBO for rendering the stimulus into.
+        self.stim_texture = ctx.texture((width, height), 4, dtype="f2")
+        self.stim_texture.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        self.fbo = ctx.framebuffer(color_attachments=[self.stim_texture])
+
+        # Upload intensity map as a texture.
+        if intensity_map is None:
+            imap = np.ones((1, 1, 3), dtype=np.float32)
+        else:
+            imap = intensity_map.astype(np.float32)
+            if imap.ndim != 3:
+                raise ValueError(
+                    f"intensity_map must be 3D (H, W, C), got {imap.ndim}D"
+                )
+            if imap.shape[2] != 3:
+                raise ValueError(
+                    f"intensity_map must have 3 channels (RGB), got {imap.shape[2]}"
+                )
+            if imap.shape[0:2] != (height, width):
+                raise ValueError(
+                    f"intensity_map shape {imap.shape} does not match window size "
+                    f"({height}, {width})"
+                )
+        ih, iw = imap.shape[:2]
+        # OpenGL expects bottom-to-top row order
+        # In TextureSequence we use the vertex shader to flip the texture, but here we
+        # can't do that, as this would make the intensity map correct and the rendered
+        # stimulus upside down. So, just flip the intensity map now, once.
+        imap_flipped = np.ascontiguousarray(imap[::-1])
+        # OpenGL uses (w,h) indexing, but we don't need a transpose, as the byte layout
+        # is the same.
+        self.imap_texture = ctx.texture(
+            (iw, ih), 3, data=imap_flipped.tobytes(), dtype="f4"
+        )
+        self.imap_texture.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        self.imap_texture.repeat_x = False
+        self.imap_texture.repeat_y = False
+
+        # Upload the encoding curve as an (N, 1) lookup-table texture.
+        lut = make_encode_lut(encoding)
+        self.lut_texture = ctx.texture((len(lut), 1), 1, data=lut.tobytes(), dtype="f4")
+        self.lut_texture.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        self.lut_texture.repeat_x = False
+        self.lut_texture.repeat_y = False
+
+        # Compile the post-processing shader.
+        vertex_shader_path = (
+            importlib.resources.files("fpspy.resources") / self.VERTEX_SHADER
+        )
+        fragment_shader_path = (
+            importlib.resources.files("fpspy.resources") / self.FRAGMENT_SHADER
+        )
+        vertex_shader = vertex_shader_path.read_text()
+        fragment_shader = fragment_shader_path.read_text()
+
+        self.program = ctx.program(
+            vertex_shader=vertex_shader, fragment_shader=fragment_shader
+        )
+        self.logger.info(
+            f"DisplayAdapter shader compiled.\n"
+            f"\tvertex shader: {vertex_shader_path}\n"
+            f"\tfragment shader: {fragment_shader_path}"
+        )
+        self.program["stimulus_tex"].value = self.STIM_TEX_UNIT
+        self.program["intensity_map_tex"].value = self.IMAP_TEX_UNIT
+        self.program["encode_lut_tex"].value = self.LUT_TEX_UNIT
+        self.program["encode_lut_n"].value = len(lut)
+        self.program["intensity_prescale"].value = self.intensity_prescale
+        self.program["clip_mode"].value = self.CLIP_MODES[clip_mode]
+
+        # Fullscreen quad (two triangles covering clip space).
+        # fmt: off
+        quad_verts = np.array(
+            [#    x   y
+                [-1, -1],  # bottom left
+                [-1,  1],  # top left
+                [ 1, -1],  # bottom right
+                [ 1, -1],  # bottom right
+                [-1,  1],  # top left
+                [ 1,  1],  # top right
+            ],
+            dtype=np.float32,
+        )
+        # fmt: on
+        self.vbo = ctx.buffer(quad_verts.tobytes())
+        self.vao = ctx.simple_vertex_array(self.program, self.vbo, "in_pos")
+
+    def render(self, ctx: moderngl.Context):
+        """Draw the adapted stimulus to the currently bound framebuffer.
+
+        Call this after rendering the stimulus into self.fbo.
+        """
+        self.stim_texture.use(location=self.STIM_TEX_UNIT)
+        self.imap_texture.use(location=self.IMAP_TEX_UNIT)
+        self.lut_texture.use(location=self.LUT_TEX_UNIT)
+        self.vao.render(moderngl.TRIANGLES)
+
+    def release(self):
+        """Release all GPU resources."""
+        for resource in [
+            self.vao,
+            self.vbo,
+            self.stim_texture,
+            self.imap_texture,
+            self.lut_texture,
+            self.fbo,
+        ]:
+            if resource is not None:
+                resource.release()
+
+
 # Callback is given the frame index.
 OnTriggerCallback = Callable[[], None]
 
@@ -192,16 +418,21 @@ class Presenter:
                 Shift of the window in x direction.
             "window_size" : tuple
                 Size of the window as (width, height).
+            "mirror": bool
+                Whether to mirror the stimulus horizontally.
+            "rotation": float
+                Rotation of the stimulus in degrees (after any mirror).
             "fullscreen" : bool
                 Whether to use fullscreen mode or not. Fullscreen is currently only
                 working on the main monitor.
             "style" : str
-                Style of the window.
+                Style of the window. Used by pyglet.
             "channels" : list of int
                 List of channels to present on this window.
             "clear_rgba" : list of float
                 Clear color for the window as [r, g, b, a].
-
+            "encoding": str
+                Display encoding for the window. "srgb", "ti-video-enhanced" or "none".
         """
         self.process_idx = process_idx
         self.config = config
@@ -211,6 +442,8 @@ class Presenter:
         self.delay = delay
         self.setup_logging()
         self.setup_window(config)
+        self.setup_display_adapter(config)
+        self.log_info()
 
         # Callbacks. Currently only allows for one callback per event.
         # Purpose: to allow for arduino color changing.
@@ -255,6 +488,48 @@ class Presenter:
         self.window.init_mgl_context()
         self.window.set_default_viewport()
 
+    def setup_display_adapter(self, config):
+        # I'm not sure if the MCS's play.py will ever want to use encodings or intensity
+        # maps, so I've chosen to allow the config options to be None.
+        window_config = config["windows"][str(self.process_idx)]
+        self.encoding = window_config.get("encoding", "identity")
+        supported_encodings = {"srgb", "ti-video-enhanced", "identity"}
+        if self.encoding not in supported_encodings:
+            raise UnsupportedOperation(
+                f"Unsupported encoding '{self.encoding}'. Supported encodings:"
+                f"{supported_encodings}"
+            )
+        self.intensity_map_path = window_config.get("intensity_map_path")
+        use_adapter = not (
+            self.intensity_map_path is None and self.encoding == "identity"
+        )
+        if use_adapter:
+            intensity_prescale = window_config.get("intensity_prescale", 1.0)
+            intensity_map = None
+            if self.intensity_map_path is not None:
+                intensity_map = np.load(self.intensity_map_path)
+            self.display_adapter = DisplayAdapter(
+                self.window.ctx,
+                *self.window.size,
+                self.encoding,
+                intensity_map,
+                intensity_prescale,
+            )
+        else:
+            self.display_adapter = None
+
+    def log_info(self):
+        self.logger.info(
+            f"Presenter {self.process_idx} started. "
+            f"Window size: {self.window.size}, "
+            f"channels: {self.c_channels}, "
+            f"mirror: {self.mirror}, "
+            f"rotation: {self.rotation}, "
+            f"fps: {self.fps}, "
+            f"encoding: {self.encoding}, "
+            f"intensity_map_path: {self.intensity_map_path}"
+        )
+
     def setup_logging(self):
         self.logger = logging.LoggerAdapter(
             logging.getLogger(__name__), {"window_idx": self.process_idx}
@@ -265,6 +540,9 @@ class Presenter:
 
     def close_window(self):
         """Close the window."""
+        if self.display_adapter is not None:
+            self.display_adapter.release()
+            self.display_adapter = None
         if self.window is not None:
             self.window.close()
 
@@ -322,7 +600,9 @@ class Presenter:
                 if self.play_state is not None:
                     do_stop = self.step_next(**command.kwargs)
                     # current_frame is now the frame that is displayed
-                    frame_shown = self.play_state.current_frame if self.play_state else -1
+                    frame_shown = (
+                        self.play_state.current_frame if self.play_state else -1
+                    )
                     self.status_queue.put({"stepped": frame_shown})
                 else:
                     self.status_queue.put("no_stimulus")
@@ -336,6 +616,10 @@ class Presenter:
                     self.status_queue.put("no_stimulus")
             case "play":
                 do_stop = self.play(*command.args, **command.kwargs)
+                # Regardless of whether you want to stop the presenter or not, we still
+                # should signal that the stimulus is done playing. This is used to chain 
+                # multiple stimuli in a sequence.
+                self.status_queue.put({"play_finished": self.process_idx})
             case "stop":
                 do_stop = True
             case "destroy":
@@ -349,12 +633,30 @@ class Presenter:
     def _load(self, stim_path, stim_config, loops, t0, speed):
         """Load a stimuli; shared by load() and play()."""
         prog = stim.create_program(stim_path, stim_config)
-        _logger.info(f"[start] program setup")
+        self.logger.info(f"[start] program setup")
         s_frames, triggers = prog.setup(
-            self.window.ctx, *self.window.size, self.c_channels,
-            self.mirror, self.rotation, self.process_idx
+            self.window.ctx,
+            *self.window.size,
+            self.c_channels,
+            self.mirror,
+            self.rotation,
+            self.process_idx,
         )
-        _logger.info(f"[end] program setup")
+        self.logger.info(f"[end] program setup")
+        use_adapter = not prog.is_display_encoded()
+        has_adapter = self.display_adapter is not None
+        if use_adapter and not has_adapter:
+            self.logger.warning(
+                "Stimulus is not display-encoded, but no display adapter is configured."
+            )
+        elif has_adapter and not use_adapter:
+            self.logger.info(
+                "Stimulus is display-encoded. Skipping display adaptation pass."
+            )
+        elif has_adapter and use_adapter:
+            self.logger.info(
+                "Stimulus will be adapted for display using configured display adatper."
+            )
         # The presenter can delay and loop a stimulus.
         s_frames = s_frames * speed + t0
         frame_idxs, s_frames, triggers = fpspy.stim.loop(s_frames, triggers, loops)
@@ -418,6 +720,24 @@ class Presenter:
         self.window.ctx.clear(0, 0, 0)
         self.window.swap_buffers()
 
+    def _render_to_screen(self, prog, frame_idx, global_frame_num):
+        """Render a frame, applying display adaptation if enabled."""
+        has_adapter = self.display_adapter is not None
+        use_adapter = not prog.is_display_encoded()
+        if use_adapter and has_adapter:
+            # Render stimulus into the offscreen FBO.
+            self.display_adapter.fbo.use()
+            self.window.ctx.clear(0, 0, 0)
+            prog.render(self.window.ctx, frame_idx, global_frame_num)
+            # Switch back to the default framebuffer and draw adapted result.
+            self.window.use()
+            self.window.ctx.clear(0, 0, 0)
+            self.display_adapter.render(self.window.ctx)
+        else:
+            # No adaptation — render directly to screen.
+            self.window.ctx.clear(0, 0, 0)
+            prog.render(self.window.ctx, frame_idx, global_frame_num)
+
     def show_frame(self, frame):
         """Show the given frame.
 
@@ -431,9 +751,9 @@ class Presenter:
         assert self.play_state is not None, "No stimulus loaded."
         state = self.play_state
         self.window.use()
-        # Clear window (to black is fine), render the stimulus and swap buffers.
-        self.window.ctx.clear(0, 0, 0)
-        state.prog.render(self.window.ctx, state.frame_idxs[frame], frame)
+        self._render_to_screen(
+            self.window.ctx, state.prog, state.frame_idxs[frame], frame
+        )
         self.window.swap_buffers()
         if state.triggers[frame]:
             self.notify_trigger()
@@ -474,7 +794,7 @@ class Presenter:
         N = len(frame_idxs)
         self.window.use()
         srgb_capable, srgb_enabled = probe_default_fbo_srgb()
-        _logger.debug(
+        self.logger.debug(
             f"Framebuffer sRGB capable: {srgb_capable}, enabled: {srgb_enabled}"
         )
         if srgb_enabled:
@@ -496,9 +816,7 @@ class Presenter:
                 dropped_frames.append(i)
                 continue
 
-            # Clear window (to black is fine), render the stimulus and swap buffers.
-            self.window.ctx.clear(0, 0, 0)
-            prog.render(self.window.ctx, frame_idxs[i], i)
+            self._render_to_screen(prog, frame_idxs[i], i)
             self.window.swap_buffers()
             if triggers[i]:
                 self.notify_trigger()
@@ -684,8 +1002,12 @@ class ArrayRenderer:
         """
         # The GUI can customize the stimulus through the config.
         s_frames, triggers = prog.setup(
-            self.ctx, *self.window_size, self.c_channels,
-            self.mirror, self.rotation, self.process_idx
+            self.ctx,
+            *self.window_size,
+            self.c_channels,
+            self.mirror,
+            self.rotation,
+            self.process_idx,
         )
         n_frames = len(s_frames) - 1
         frame_idxs = np.arange(n_frames)
@@ -795,7 +1117,7 @@ def validate_stim(stim_path, stim_config) -> bool:
         prog = stim.create_program(stim_path, stim_config)
     except Exception as e:
         _logger.error(f"Failed to load stimulus program:\n{e}")
-        #print(f"Failed to load stimulus program:\n{e}")
+        # print(f"Failed to load stimulus program:\n{e}")
         return True
     return False
 
