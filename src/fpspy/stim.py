@@ -1463,6 +1463,15 @@ class TextureSequence(StimProgram):
         if self.stim_arr is not None:
             self.stim_arr.close()
 
+    def is_display_encoded(self) -> bool:
+        """Texture sequences must be display-ready.
+
+        They must include gamma curve and quantization. A future feature might add
+        support for using linear values stored as floats, but for now, it's uint8 
+        encoded values only.
+        """
+        return False
+
 
 class ProceduralShader(StimProgram):
     """A procedural shader-based stimulus.
@@ -1561,6 +1570,14 @@ class ProceduralShader(StimProgram):
             self._vbo.release()
         self._vao = None
         self._vbo = None
+
+    def is_display_encoded(self) -> bool:
+        """Assumes the shader outputs display-ready values.
+
+        This could be changed so that we read the property from the shader's config
+        file.
+        """
+        return True
 
 
 class MoviePlayer(StimProgram):
