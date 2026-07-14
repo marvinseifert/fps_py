@@ -353,6 +353,7 @@ class DisplayAdapter:
 
 # Callback is given the frame index.
 OnTriggerCallback = Callable[[], None]
+OnMessageCallback = Callable[[str], None]
 
 
 @dataclasses.dataclass
@@ -469,6 +470,7 @@ class Presenter:
         # Callbacks. Currently only allows for one callback per event.
         # Purpose: to allow for arduino color changing.
         self._on_trigger = None
+        self._on_message = None
         self._on_stop = None
         # Play state is used when loading and stepping (not needed for one-shot play).
         self.play_state: Optional[PlayState] = None
@@ -572,6 +574,10 @@ class Presenter:
         """Register a callback for the after swap buffers event."""
         self._on_trigger = callback
 
+    def register_on_message(self, callback: OnMessageCallback):
+        """Register a callback for sending a message on the trigger wire."""
+        self._on_message = callback
+
     def register_on_stop(self, callback: Callable[[], None]):
         """Register a callback for the stop event."""
         self._on_stop = callback
@@ -642,6 +648,14 @@ class Presenter:
                 # should signal that the stimulus is done playing. This is used to chain
                 # multiple stimuli in a sequence.
                 self.status_queue.put({"play_finished": self.process_idx})
+            case "message":
+                # Blocks until the Arduino has finished putting the message on
+                # the wire, so the caller knows triggering is safe again.
+                if self._on_message is not None:
+                    self._on_message(*command.args, **command.kwargs)
+                # Always answer, even with no Arduino attached: the caller waits
+                # on this before playing, and would otherwise hang.
+                self.status_queue.put({"message_sent": self.process_idx})
             case "stop":
                 do_stop = True
             case "destroy":
@@ -962,13 +976,15 @@ def pyglet_app(
         delay=delay,
     )
     if enable_triggers:
-        arduino = fpspy.arduino.Arduino(
+        arduino = fpspy.arduino.Arduino2(
             port=fpspy.config.get_arduino_port(config),
             baud_rate=fpspy.config.get_arduino_baud_rate(config),
             trigger_command=fpspy.config.get_arduino_trigger_command(config),
         )
         # Send arduino triggers on buffer swap
         presenter.register_on_trigger(arduino.send_trigger)
+        # Put labels on the trigger wire between stimuli.
+        presenter.register_on_message(arduino.send_text)
     presenter.run_empty()
 
 
