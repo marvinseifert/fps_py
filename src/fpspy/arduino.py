@@ -103,7 +103,8 @@ class Arduino:
     def disconnect(self):
         """Disconnect from the Arduino."""
         with self._lock:
-            self._serial.close()
+            if self._serial is not None:
+                self._serial.close()
             self.connected = False
             print("Arduino disconnected")
 
