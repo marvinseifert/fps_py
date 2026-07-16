@@ -45,11 +45,12 @@ import logging
 import queue as std_queue
 import time
 from pathlib import Path
-from typing import Iterable, Optional, Union
+from typing import Iterable, List, Optional, Union
 
 import fpspy.config
 import fpspy.play_3brain
 import fpspy.queue
+import fpspy.stim
 
 _logger = logging.getLogger(__name__)
 
@@ -73,7 +74,6 @@ def end_msg(label: str) -> str:
     return f"{END_PREFIX}{label}"
 
 
-@dataclasses.dataclass
 class Item:
     """One entry of a playlist."""
 
@@ -88,6 +88,22 @@ class Item:
     # enable_triggers and a connected Arduino; ignored otherwise.
     label: Optional[str] = None
 
+    def __init__(
+        self,
+        stim_path: PathLike,
+        stim_config_path: Optional[PathLike] = None,
+        loops: int = 1,
+        lazy_textures: bool = False,
+        label: Optional[str] = None,
+    ):
+        self.stim_path = stim_path
+        self.stim_config_path = stim_config_path
+        self.loops = loops
+        self.lazy_textures = lazy_textures
+        if label is None:
+            label = Path(stim_path).name
+        self.label = label
+
     def stim_config(self) -> Optional[str]:
         """Build the stim_config string, mirroring the CLI's play command."""
         if Path(self.stim_path).suffix.lower() == ".h5":
@@ -97,6 +113,112 @@ class Item:
         return None
 
 
+@dataclasses.dataclass
+class ItemInfo:
+    """Timing information for one playlist item."""
+
+    stim_path: Path
+    label: Optional[str]
+    loops: int
+    # Seconds for all loops, or None if the stimulus can't report its duration
+    # without opening a window (e.g. movies).
+    duration: Optional[float]
+
+
+@dataclasses.dataclass
+class PlaylistInfo:
+    """Timing information for a playlist. Returned by info()."""
+
+    items: List[ItemInfo]
+    # Inter-stimulus delay applied before every item.
+    delay: float
+
+    def total_duration(self) -> Optional[float]:
+        """Total running time in seconds, or None if any item is unknown."""
+        durations = [item.duration for item in self.items]
+        if any(d is None for d in durations):
+            return None
+        return sum(durations) + self.delay * len(self.items)
+
+    def __str__(self) -> str:
+        lines = []
+        for i, item in enumerate(self.items):
+            name = (
+                item.label
+                if item.label is not None
+                else Path(item.stim_path).name
+            )
+            loops_str = f" x{item.loops}" if item.loops != 1 else ""
+            lines.append(
+                f"[{i + 1}/{len(self.items)}] {_fmt_duration(item.duration):>8} "
+                f" {name}{loops_str}"
+            )
+        lines.append(
+            f"Total: {_fmt_duration(self.total_duration())}"
+            + (
+                f" (includes {self.delay:g} s delay per item)"
+                if self.delay
+                else ""
+            )
+        )
+        return "\n".join(lines)
+
+
+def _fmt_duration(seconds: Optional[float]) -> str:
+    if seconds is None:
+        return "unknown"
+    m, s = divmod(round(seconds), 60)
+    h, m = divmod(m, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def _item_duration(item: Item) -> Optional[float]:
+    """Running time of one item in seconds (all loops), without opening a window.
+
+    Known for .h5 stimuli (from the file's frame durations, including any
+    channel-mask repeats) and for script programs that expose `n_frames` and
+    `fps` attributes. None otherwise (e.g. movies, which are only probed
+    during setup()).
+    """
+    prog = fpspy.stim.create_program(Path(item.stim_path), item.stim_config())
+    duration = None
+    if isinstance(prog, fpspy.stim.TextureSequence):
+        duration = float(prog.stim_arr.frame_times()[-1])
+    else:
+        n_frames = getattr(prog, "n_frames", None)
+        fps = getattr(prog, "fps", None)
+        if (
+            isinstance(n_frames, int)
+            and isinstance(fps, (int, float))
+            and fps > 0
+        ):
+            duration = n_frames / fps
+    if duration is not None:
+        duration *= item.loops
+    return duration
+
+
+def info(items: Iterable[Item], delay: float = 0.0) -> PlaylistInfo:
+    """Report the running time of each item and of the whole playlist.
+
+    `delay` is the inter-stimulus gap that play_playlist will apply before
+    every item (the config's presentation_delay); pass it to have the total
+    account for the gaps. Durations don't include trigger-wire marker time.
+
+    print() the result for a readable summary, or use the fields directly.
+    """
+    item_infos = [
+        ItemInfo(
+            stim_path=Path(item.stim_path),
+            label=item.label,
+            loops=item.loops,
+            duration=_item_duration(item),
+        )
+        for item in items
+    ]
+    return PlaylistInfo(items=item_infos, delay=delay)
+
+
 def play_playlist(
     items: Iterable[Item],
     config_path: Optional[PathLike] = None,
@@ -104,20 +226,30 @@ def play_playlist(
     out_dir: Optional[PathLike] = None,
     enable_triggers: bool = True,
     log_level: str = "INFO",
+    label: Optional[str] = None,
 ) -> None:
     """Play each item in sequence, reusing one set of presenter windows.
 
     `delay` (default: the config's presentation_delay) applies before every
     item, acting as the inter-stimulus gap. Raises RuntimeError if a presenter
     process dies; remaining items are not played.
+
+    `label` marks the playlist as a whole: it goes on the trigger wire as
+    "S:<label>" before any stimulus starts and "E:<label>" after the last one
+    finishes. Like Item labels, it needs enable_triggers and a connected
+    Arduino, and is ignored otherwise.
     """
     items = list(items)
     if not items:
         raise ValueError("Empty playlist.")
     # Validate everything up front, before any window opens.
+    if label is not None:
+        _check_label(label)
     for item in items:
         if not Path(item.stim_path).exists():
-            raise FileNotFoundError(f"Stimulus file not found: {item.stim_path}")
+            raise FileNotFoundError(
+                f"Stimulus file not found: {item.stim_path}"
+            )
         if (
             item.stim_config_path is not None
             and not Path(item.stim_config_path).exists()
@@ -137,16 +269,22 @@ def play_playlist(
         out_dir = fpspy.config.create_outdir(config)
     _logger.info(f"{out_dir} [output dir]")
 
-    processes, cmd_queues, status_queue = fpspy.play_3brain.start_presenter_processes(
-        config, out_dir, delay, enable_triggers, log_level
+    processes, cmd_queues, status_queue = (
+        fpspy.play_3brain.start_presenter_processes(
+            config, out_dir, delay, enable_triggers, log_level
+        )
     )
     completed_ok = False
     try:
+        if enable_triggers and label is not None:
+            _send_marker(cmd_queues, status_queue, processes, start_msg(label))
         for i, item in enumerate(items):
             _logger.info(f"[{i + 1}/{len(items)}] {item.stim_path}")
             stim_config = item.stim_config()
             if enable_triggers and item.label is not None:
-                _send_marker(cmd_queues, status_queue, processes, start_msg(item.label))
+                _send_marker(
+                    cmd_queues, status_queue, processes, start_msg(item.label)
+                )
             # A fresh reference time per item: frame schedules are t0-relative
             # and stim.delay() raises if the schedule start is in the past.
             t0 = time.perf_counter()
@@ -162,8 +300,12 @@ def play_playlist(
                 )
             _wait_for_play_finished(status_queue, processes, item)
             if enable_triggers and item.label is not None:
-                _send_marker(cmd_queues, status_queue, processes, end_msg(item.label))
+                _send_marker(
+                    cmd_queues, status_queue, processes, end_msg(item.label)
+                )
             _logger.info(f"[{i + 1}/{len(items)}] finished")
+        if enable_triggers and label is not None:
+            _send_marker(cmd_queues, status_queue, processes, end_msg(label))
         completed_ok = True
     finally:
         if completed_ok:
@@ -188,7 +330,7 @@ def _check_label(label: str) -> None:
         )
     # Both markers must fit, and the limit is bytes of UTF-8, not characters.
     for prefix in (START_PREFIX, END_PREFIX):
-        max_text_bytes = 255 # see arduino.py
+        max_text_bytes = 255  # see arduino.py
         n = len(f"{prefix}{label}".encode("utf-8"))
         if n > max_text_bytes:
             raise ValueError(
@@ -206,10 +348,14 @@ def _send_marker(cmd_queues, status_queue, processes, text: str) -> None:
     """
     _logger.info(f"{text} [trigger wire]")
     fpspy.queue.put_onto(cmd_queues[0], "message", text)
-    _wait_for_status(status_queue, processes, "message_sent", 1, f"sending {text!r}")
+    _wait_for_status(
+        status_queue, processes, "message_sent", 1, f"sending {text!r}"
+    )
 
 
-def _wait_for_status(status_queue, processes, key: str, n: int, what: str) -> None:
+def _wait_for_status(
+    status_queue, processes, key: str, n: int, what: str
+) -> None:
     """Block until `n` presenters report `key` on the status queue."""
     seen = 0
     while seen < n:
