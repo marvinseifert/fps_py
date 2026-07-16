@@ -9,6 +9,7 @@ import time
 import rich
 import rich.logging
 import rich.highlighter
+import rich.console
 
 
 class Highlighter(rich.highlighter.ReprHighlighter):
