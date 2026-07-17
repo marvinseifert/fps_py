@@ -787,9 +787,7 @@ class Presenter:
         assert self.play_state is not None, "No stimulus loaded."
         state = self.play_state
         self.window.use()
-        self._render_to_screen(
-            self.window.ctx, state.prog, state.frame_idxs[frame], frame
-        )
+        self._render_to_screen(state.prog, state.frame_idxs[frame], frame)
         self.window.swap_buffers()
         if state.triggers[frame]:
             self.notify_trigger()
