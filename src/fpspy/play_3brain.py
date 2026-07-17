@@ -159,7 +159,7 @@ class DisplayAdapter:
 
     Runs decode -> intensity correction -> clip -> encode (see module docstring).
     Intensity correction is skipped by passing intensity_map=None; the other
-    stages are configured by `is_stim_linear`, `clip_mode` and `encoding`.
+    stages are configured by `clip_mode` and `encoding`.
 
     Usage:
         adapter = DisplayAdapter(ctx, width, height, intensity_map, encoding)
