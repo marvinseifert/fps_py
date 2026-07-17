@@ -5,14 +5,24 @@ import threading
 import time
 
 
-def connect_to_arduino(port="COM3", baud_rate=9600):
+# Opening the port asserts DTR, which resets boards wired for auto-reset (Uno,
+# Nano, ...). Their bootloader then owns the line for ~1.5 s and consumes
+# anything written to it, so the first message sent after connecting reaches
+# nothing and only surfaces later as a send_text() timeout.
+BOOT_WAIT_S = 2.5
+
+
+def connect_to_arduino(port="COM3", baud_rate=9600, boot_wait_s=BOOT_WAIT_S):
     """Establish a connection to the Arduino."""
     try:
         arduino = serial.Serial(port, baud_rate)
-        return arduino
     except Exception as e:
         print(f"Error connecting to Arduino: {e}")
         return None
+    time.sleep(boot_wait_s)
+    # Drop any bootloader chatter, so the first read isn't answering it.
+    arduino.reset_input_buffer()
+    return arduino
 
 
 class Arduino:
@@ -164,7 +174,7 @@ class Arduino2:
     def __init__(
         self,
         port="COM3",
-        baud_rate=9600,
+        baud_rate=250000,
         trigger_command="T",
     ):
         self.port = port
