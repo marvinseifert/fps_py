@@ -11,7 +11,8 @@ import fpspy.config
 import fpspy.gui
 import fpspy.play_3brain
 import fpspy.stim
-import fpspy.queue
+import fpspy.fps_queue
+import fpspy.presentation
 import fpspy._logging as _logging
 import json
 
@@ -34,6 +35,87 @@ def _preview_h5_stim(stim_path: Path, loops: int):
     )
     _logger.info(info)
     return info
+
+
+def _play(
+    stim_path: Path,
+    config_path: Optional[Path] = None,
+    stim_config_path: Optional[Path] = None,
+    loops: int = 1,
+    delay: Optional[float] = None,
+    out_dir: Optional[Path] = None,
+    enable_triggers: bool = True,
+    lazy_textures: bool = False,
+    verbose: int = 0,
+):
+    """Body of the `play` command as a plain function with real defaults.
+
+    Call this directly (e.g. from a PyCharm run/debug configuration) to bypass
+    typer's CLI parsing; calling the decorated `play` directly would leave the
+    typer.Option/Argument sentinel objects as parameter values.
+    """
+    log_level = "WARNING" if verbose == 0 else "INFO" if verbose == 1 else "DEBUG"
+    _logging.setup_main_logging(log_level)
+
+    # Validate stimulus file exists.
+    if not stim_path.exists():
+        _logger.error(f"Error: stimulus file not found: {stim_path}")
+        raise typer.Exit(1)
+
+    # Load configuration.
+    config = fpspy.config.load_config(config_path)
+    if delay is None:
+        delay = fpspy.config.get_presentation_delay(config)
+    if out_dir is None:
+        out_dir = fpspy.config.create_outdir(config)
+    _logger.info(f"{out_dir} [output dir]")
+
+    if stim_path.suffix.lower() == ".h5":
+        # Some extra features for HDF5 stimuli (TextureSequence programs).
+        # They get a preview:
+        _preview_h5_stim(stim_path, loops)
+        # And we allow configuring lazy loading via cmdline option.
+        # Of which that's the only current option, so we don't even bother with a
+        # config file for now.
+        stim_config = json.dumps({"lazy_textures": lazy_textures})
+    else:
+        # Not a TextureSequence program, so no special options. Need to load the
+        # stimulus config file, if provided.
+        if stim_config_path is not None:
+            with stim_config_path.open("r", encoding="utf-8") as f:
+                stim_config = f.read()
+        else:
+            stim_config = None
+
+
+    # Currently, only TextureSequence takes an option (lazy_textures).
+
+    # Create a reference time point.
+    t0 = time.perf_counter()
+
+    # Start presenter processes, and wait to finish.
+    presenter_processes, cmd_queues, status_queue = (
+        fpspy.presentation.start_presenter_processes(
+            config, out_dir, delay, enable_triggers, log_level
+        )
+    )
+    play_cmd = "play"
+    # Create queues for inter-process communication.
+    for queue in cmd_queues:
+        fpspy.fps_queue.put_onto(
+            queue,
+            play_cmd,
+            stim_path=stim_path,
+            stim_config=stim_config,
+            loops=loops,
+            t0=t0,
+            close_after=True,
+        )
+
+    for p in presenter_processes:
+        p.join()
+
+    _logger.info("Stimulus playback completed.")
 
 
 @cli_app.command()
@@ -99,68 +181,17 @@ def play(
     ),
 ):
     """Run a stimulus from the command line without the GUI."""
-    log_level = "WARNING" if verbose == 0 else "INFO" if verbose == 1 else "DEBUG"
-    _logging.setup_main_logging(log_level)
-
-    # Validate stimulus file exists.
-    if not stim_path.exists():
-        _logger.error(f"Error: stimulus file not found: {stim_path}")
-        raise typer.Exit(1)
-
-    # Load configuration.
-    config = fpspy.config.load_config(config_path)
-    if delay is None:
-        delay = fpspy.config.get_presentation_delay(config)
-    if out_dir is None:
-        out_dir = fpspy.config.create_outdir(config)
-    _logger.info(f"{out_dir} [output dir]")
-
-    if stim_path.suffix.lower() == ".h5":
-        # Some extra features for HDF5 stimuli (TextureSequence programs).
-        # They get a preview:
-        _preview_h5_stim(stim_path, loops)
-        # And we allow configuring lazy loading via cmdline option.
-        # Of which that's the only current option, so we don't even bother with a
-        # config file for now.
-        stim_config = json.dumps({"lazy_textures": lazy_textures})
-    else:
-        # Not a TextureSequence program, so no special options. Need to load the 
-        # stimulus config file, if provided.
-        if stim_config_path is not None:
-            with stim_config_path.open("r", encoding="utf-8") as f:
-                stim_config = f.read()
-        else:
-            stim_config = None
-
-
-    # Currently, only TextureSequence takes an option (lazy_textures).
-
-    # Create a reference time point.
-    t0 = time.perf_counter()
-
-    # Start presenter processes, and wait to finish.
-    presenter_processes, cmd_queues, status_queue = (
-        fpspy.play_3brain.start_presenter_processes(
-            config, out_dir, delay, enable_triggers, log_level
-        )
+    _play(
+        stim_path,
+        config_path,
+        stim_config_path,
+        loops,
+        delay,
+        out_dir,
+        enable_triggers,
+        lazy_textures,
+        verbose,
     )
-    play_cmd = "play"
-    # Create queues for inter-process communication.
-    for queue in cmd_queues:
-        fpspy.queue.put_onto(
-            queue,
-            play_cmd,
-            stim_path=stim_path,
-            stim_config=stim_config,
-            loops=loops,
-            t0=t0,
-            close_after=True,
-        )
-
-    for p in presenter_processes:
-        p.join()
-
-    _logger.info("Stimulus playback completed.")
 
 
 @cli_app.command()
@@ -260,7 +291,7 @@ def gui(
 
     # Start presenter processes.
     presenter_processes, cmd_queues, status_queue = (
-        fpspy.play_3brain.start_presenter_processes(
+        fpspy.presentation.start_presenter_processes(
             config, out_dir, delay, True, log_level
         )
     )
@@ -286,5 +317,8 @@ def run_cli():
     cli_app()
 
 
+
+
 if __name__ == "__main__":
-    run_cli()
+    _play(Path("/home/mawa/.local/share/fpspy/test_bigger.h5"), verbose=2, lazy_textures=False, enable_triggers=True)
+    #gui_app()
