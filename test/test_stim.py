@@ -1,3 +1,4 @@
+import h5py
 import numpy as np
 import pytest
 
@@ -179,6 +180,50 @@ class TestWithChannels:
         result = s.with_channels([3, 4, 5])
         assert result.n_channels == 3
         np.testing.assert_array_equal(result._frames, s._frames[..., [3, 4, 5]])
+
+    def test_empty_channels_raises(self):
+        s = _make_stim_array(n_channels=3)
+        with pytest.raises(ValueError, match="empty"):
+            s.with_channels([])
+
+    def test_non_integer_channel_raises(self):
+        s = _make_stim_array(n_channels=3)
+        with pytest.raises(ValueError, match="integer"):
+            s.with_channels([0, 1.5, 2])
+
+    def test_multichannel_repeated_channel_on_hdf5_backed_array(self, tmp_path):
+        """Regression test: h5py.Dataset fancy-indexing rejects repeated/unsorted
+        indices ("Indexing elements must be in increasing order"), unlike numpy.
+
+        This reproduces the real crash: a genuinely multi-channel stimulus loaded
+        lazily from disk (h5py.Dataset-backed _frames, not yet materialized),
+        with a window `channels` setting like [0, 0, 0] that broadcasts one real
+        channel to all three physical outputs.
+        """
+        s = _make_stim_array(n_channels=3, value=None)
+        path = tmp_path / "stim.h5"
+        s.write_hdf5(path)
+        loaded = StimArray.read_hdf5(path)
+        assert isinstance(loaded._frames, h5py.Dataset)
+
+        result = loaded.with_channels([0, 0, 0])
+        assert result.n_channels == 3
+        expected = np.asarray(s._frames)[..., 0]
+        for i in range(3):
+            np.testing.assert_array_equal(np.asarray(result._frames)[..., i], expected)
+
+    def test_multichannel_unsorted_channels_on_hdf5_backed_array(self, tmp_path):
+        """Non-increasing order (e.g. [2, 0, 1]) must also work, not just repeats."""
+        s = _make_stim_array(n_channels=3, value=None)
+        path = tmp_path / "stim.h5"
+        s.write_hdf5(path)
+        loaded = StimArray.read_hdf5(path)
+
+        result = loaded.with_channels([2, 0, 1])
+        expected = np.asarray(s._frames)
+        np.testing.assert_array_equal(
+            np.asarray(result._frames), expected[..., [2, 0, 1]]
+        )
 
     def test_multichannel_out_of_range_raises(self):
         s = _make_stim_array(n_channels=6)

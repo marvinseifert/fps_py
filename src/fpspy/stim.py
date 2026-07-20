@@ -775,6 +775,15 @@ class StimArray:
         F, H, W, C1 = self._frames.shape
         has_mask = self._channel_mask is not None
         n_ch = self.n_channels
+
+        if len(channels) == 0:
+            raise ValueError("with_channels(): `channels` must not be empty.")
+        non_ints = [c for c in channels if not isinstance(c, (int, np.integer))]
+        if non_ints:
+            raise ValueError(
+                f"with_channels({channels}): all entries must be integers, got "
+                f"non-integer value(s) {non_ints}."
+            )
         invalid = sorted({c for c in channels if not (0 <= c < n_ch)})
         if invalid:
             raise ValueError(
@@ -787,9 +796,27 @@ class StimArray:
         new_channel_mask = self._channel_mask[..., channels] if has_mask else None
         # A single real channel with no mask has nothing to select between: it
         # broadcasts to whichever physical channels request it, at render time
-        # rather than by materializing copies here. Otherwise, select the
-        # requested real channels directly.
-        new_frames = self._frames if C1 == 1 else self._frames[:, :, :, channels]
+        # rather than by materializing copies here.
+        if C1 == 1:
+            new_frames = self._frames
+        else:
+            # h5py.Dataset fancy-indexing requires strictly increasing, unique
+            # indices (unlike numpy, it rejects repeats/arbitrary order). Read
+            # only the unique channels actually needed -- h5py-safe -- then
+            # reorder/duplicate them in memory to match `channels`. That second
+            # step is cheap: it only touches the already-small, already-read
+            # selection, not the full stimulus.
+            unique_sorted = sorted(set(channels))
+            selected = np.asarray(self._frames[:, :, :, unique_sorted])
+            index_of = {c: i for i, c in enumerate(unique_sorted)}
+            reorder = [index_of[c] for c in channels]
+            # Fancy-indexing a non-leading axis produces a shape-correct but
+            # non-C-contiguous array (numpy quirk: strides end up transposed).
+            # Consumers that read raw memory (GL texture upload, .tobytes(),
+            # etc.) need real contiguous data, not just the right shape. This
+            # array is already fully materialized above, so this is just a
+            # cheap memory-layout fix, not additional eager loading.
+            new_frames = np.ascontiguousarray(selected[:, :, :, reorder])
         return StimArray(
             frames=new_frames,
             frame_durations=self._frame_durations,
@@ -1426,7 +1453,7 @@ class TextureSequence(StimProgram):
                 assert masked_frame.shape == (H, W, C)
                 _logger.info(f"Load frame:\t {i} \t{masked_frame.shape=}")
                 tex = ctx.texture(
-                    (W, H), C, 
+                    (W, H), C,
                     masked_frame,
                     samples=0, 
                     alignment=1,
