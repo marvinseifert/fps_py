@@ -965,6 +965,12 @@ def pyglet_app(
     log_level : str
         Logging level for this process (DEBUG, INFO, WARNING, ERROR, CRITICAL).
     """
+    # A spawned presenter starts with the root logger at its default WARNING
+    # level (setup_main_logging ran only in the parent, and spawn does not
+    # inherit it). Without this, every INFO the presenter logs -- including
+    # enable_file_logging's own "[log path]" line -- is filtered out before it
+    # reaches the file handler, and presenter_N.log ends up empty.
+    logging.getLogger().setLevel(log_level.upper())
     presenter = Presenter(
         process_idx,
         config,
