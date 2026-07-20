@@ -388,11 +388,18 @@ class StimArray:
               the inverse of that mapping to get linear outputs. For most other displays,
               the values would be interpreted as sRGB or rec 709 values. It is up
               to the creator of the StimArray to encode the values appropriately.
-            - float32 values in [0, 1]. The values are **linear**, and will be converted
-              encoded to device values (e.g. sRGB) according to the config's window.encoding
-              setting. Storing linear values with more bits, and then converting to sRGB
-              before sending to the display is possible; however, this will increase the
-              disk footprint and is not currently supported by StimArray. This appealing
+            - float32 values typically around [0, 1]. The values are **linear**, and
+              will be passed through gamma encoding and intensity correction according
+              to the configuration for the window. 
+
+              "typically" because it's okay to store values outside of this range, which
+              can be useful as the subsequent gamma and intensity correction can cause
+              the values to return to the [0, 1] range. Before sending to the display,
+              the values are clipped to [0, 1] then converted to [0, 255] uint8 values.
+
+              Storing linear values with more bits, and then converting to sRGB before
+              sending to the display is possible; however, this will increase the disk
+              footprint and is not currently supported by StimArray. This appealing
               feature enables storing linear values, and having the The TextureSequence
               convert them to the appropriate values for each display device, making the
               stimulus device agnostic (in terms of color encoding). It's also useful if
