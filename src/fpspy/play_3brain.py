@@ -43,11 +43,8 @@ import pyglet
 #   - moderngl_window is upgraded to a version that uses `pyglet.display`.
 #   - pyglet is pinned to < 2.0 in pyproject.toml.
 # ----------------------------------------------------------------------------
-if not hasattr(pyglet, "canvas"):
-    pyglet.canvas = pyglet.display
-
 import fpspy.config
-import fpspy.queue
+import fpspy.fps_queue
 import fpspy._logging
 import fpspy.arduino
 import OpenGL.GL as gl
@@ -583,7 +580,7 @@ class Presenter:
         """Check and execute commands from the main process (gui)."""
         if self.queue.empty():
             return
-        command = fpspy.queue.get_from(self.queue)
+        command = fpspy.fps_queue.get_from(self.queue)
 
         do_stop = False
         do_destroy = False
@@ -617,7 +614,7 @@ class Presenter:
             case "play":
                 do_stop = self.play(*command.args, **command.kwargs)
                 # Regardless of whether you want to stop the presenter or not, we still
-                # should signal that the stimulus is done playing. This is used to chain 
+                # should signal that the stimulus is done playing. This is used to chain
                 # multiple stimuli in a sequence.
                 self.status_queue.put({"play_finished": self.process_idx})
             case "stop":
