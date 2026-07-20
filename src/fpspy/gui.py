@@ -20,7 +20,7 @@ import time
 import numpy as np
 import fpspy.create_noise
 import fpspy.shuffle_noise
-import fpspy.queue
+import fpspy.fps_queue
 
 
 class FpspyGui:
