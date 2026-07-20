@@ -31,7 +31,10 @@ presentation_delay = 4
 [arduino]
 # port = "/dev/ttyUSB0"
 port = "dummy"
-baud_rate = 9600
+# Must match the firmware's Serial.begin() (code/arduino/): the trigger-line
+# firmware runs at 250000. At a mismatched rate nothing decodes, including the
+# board's READY boot handshake.
+baud_rate = 250000
 trigger_command = "T"
 
 

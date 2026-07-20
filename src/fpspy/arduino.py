@@ -5,26 +5,6 @@ import threading
 import time
 
 
-# Opening the port asserts DTR, which resets boards wired for auto-reset (Uno,
-# Nano, ...). Their bootloader then owns the line for ~1.5 s and consumes
-# anything written to it, so the first message sent after connecting reaches
-# nothing and only surfaces later as a send_text() timeout.
-BOOT_WAIT_S = 2.5
-
-
-def connect_to_arduino(port="COM3", baud_rate=9600, boot_wait_s=BOOT_WAIT_S):
-    """Establish a connection to the Arduino."""
-    try:
-        arduino = serial.Serial(port, baud_rate)
-    except Exception as e:
-        print(f"Error connecting to Arduino: {e}")
-        return None
-    time.sleep(boot_wait_s)
-    # Drop any bootloader chatter, so the first read isn't answering it.
-    arduino.reset_input_buffer()
-    return arduino
-
-
 class Arduino:
     """
     Communicate with an Arduino device.
@@ -50,7 +30,11 @@ class Arduino:
         self._lock = threading.RLock()
 
     def connect(self):
-        self._serial = connect_to_arduino(self.port, self.baud_rate)
+        try:
+            self._serial = serial.Serial(self.port, self.baud_rate)
+        except Exception as e:
+            print(f"Error connecting to Arduino: {e}")
+            self._serial = None
         if self._serial is not None:
             self.connected = True
             print("Arduino connected")
@@ -170,6 +154,12 @@ class Arduino2:
     TEXT_ERR = "MERR"
     # The firmware's payload limit, in bytes of UTF-8 (not characters).
     MAX_TEXT_BYTES = 255
+    # Boot handshake: the firmware prints this once from setup(). See connect().
+    READY_TOKEN = "READY"
+    # Ceiling on the wait for READY after the port opens (board reset +
+    # bootloader). We proceed the instant READY arrives; this only bounds a
+    # board that never sends it.
+    BOOT_TIMEOUT_S = 6.0
 
     def __init__(
         self,
@@ -186,13 +176,52 @@ class Arduino2:
         self._lock = threading.RLock()
 
     def connect(self):
-        self._serial = connect_to_arduino(self.port, self.baud_rate)
-        if self._serial is not None:
-            self.connected = True
-            print("Arduino connected")
-        else:
+        """Open the serial port and wait for the firmware's READY handshake.
+
+        Opening the port asserts DTR, which resets auto-reset boards; the
+        firmware prints READY_TOKEN from setup() once it is actually running.
+        Blocking on it means the board is live before we send anything --
+        otherwise the first send_text lands mid-boot, is swallowed by the
+        bootloader, and only surfaces later as a timeout. If READY never arrives
+        (e.g. a board that did not reset on open) we warn and proceed.
+        """
+        try:
+            self._serial = serial.Serial(self.port, self.baud_rate)
+        except Exception as e:
+            print(f"Error connecting to Arduino: {e}")
+            self._serial = None
             self.connected = False
             print("Arduino not connected")
+            return
+        self._wait_for_ready()
+        self.connected = True
+        print("Arduino connected")
+
+    def _wait_for_ready(self):
+        """Block until the firmware prints READY_TOKEN, or the timeout lapses."""
+        prev_timeout = self._serial.timeout
+        deadline = time.monotonic() + self.BOOT_TIMEOUT_S
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    print(
+                        f"Warning: Arduino boot handshake {self.READY_TOKEN!r} "
+                        f"not seen within {self.BOOT_TIMEOUT_S}s; proceeding."
+                    )
+                    break
+                self._serial.timeout = remaining
+                line = (
+                    self._serial.readline()
+                    .decode("utf-8", errors="ignore")
+                    .strip()
+                )
+                if line == self.READY_TOKEN:
+                    break
+        finally:
+            self._serial.timeout = prev_timeout
+        # Drop any post-READY chatter so the first real read isn't stale.
+        self._serial.reset_input_buffer()
 
     def send(self, message):
         """Send a message to the Arduino."""
