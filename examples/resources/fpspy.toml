@@ -1,4 +1,4 @@
-# Default settings loaded by main.py:cli_main if no custom settings are provided.
+# Default settings loaded by main_3brain.py if no custom settings are provided.
 
 # --- Global settings ---
 gl_version = [4, 1]
