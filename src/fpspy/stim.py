@@ -36,6 +36,7 @@ CURRENT_HDF5_FORMAT_VER = "1"
 TEXTURE_FRAG_SHADER = "fragment_shader_colour.glsl"
 QUAD_VERTEX_SHADER = "vertex_shader.glsl"
 
+
 def quad_vertex_shader_src():
     """Get the source code of the quad vertex shader.
 
@@ -334,8 +335,8 @@ class StimArray:
         - reduce the disk and memory footprint of stimuli
 
     ## Memory and disk space
-    Broadcasting and zooming are used to inflate stimuli, allowing them to be encoded 
-    in smaller arrays. 
+    Broadcasting and zooming are used to inflate stimuli, allowing them to be encoded
+    in smaller arrays.
 
     ### Broadcasting and channel mask
     The nature of many stimuli, such as being full-field or monochrome, means that
@@ -382,27 +383,23 @@ class StimArray:
         - F frames
         - (H, W) spatial dimensions, with (0, 0) corresponding to the top-left corner.
         - C channels
-        - uint8 values in [0, 255]. The values are **not linear**, but interpreted as
-          in whatever way the display device expects. In other words, the values will
-          be handed off to the display device as-is. The DLP4500 (which uses DLPC350)
-          has a built-in gamma curve, and you will need to convert linear values though
-          the inverse of that mapping to get linear outputs. For most other displays,
-          the values would be interpreted as sRGB or rec 709 values. It is up
-          to the creator of the StimArray to encode the values appropriately.
-
-          Storing linear values with more bits, such as float16 or float32, and then
-          converting to sRGB before sending to the display is possible; however, this
-          will increase the disk footprint and is not currently supported by StimArray.
-          This is quite an appealing feature, though. It would enable storing linear
-          values, and having the StimProgram convert them to the appropriate values
-          for each display device. This would make a created StimArray more portable.
-
-          Nearly all displays (including the light crafters) expect these sRGB values
-          as input and will automatically decode them, so it is a mistake to store
-          stimuli with a linear scale. Storing linear values with more bits, such as
-          float16 or float32, and then converting to sRGB before sending to the display
-          is possible; however, this will increase the disk footprint and is not 
-          currently supported by StimArray.
+        - either:
+            - uint8 values in [0, 255]. The values are **not linear**, but interpreted as
+              in whatever way the display device expects. In other words, the values will
+              be handed off to the display device as-is. The DLP4500 (which uses DLPC350)
+              has a built-in gamma curve, and you will need to convert linear values though
+              the inverse of that mapping to get linear outputs. For most other displays,
+              the values would be interpreted as sRGB or rec 709 values. It is up
+              to the creator of the StimArray to encode the values appropriately.
+            - float32 values in [0, 1]. The values are **linear**, and will be converted
+              encoded to device values (e.g. sRGB) according to the config's window.encoding
+              setting. Storing linear values with more bits, and then converting to sRGB
+              before sending to the display is possible; however, this will increase the
+              disk footprint and is not currently supported by StimArray. This appealing
+              feature enables storing linear values, and having the The TextureSequence
+              convert them to the appropriate values for each display device, making the
+              stimulus device agnostic (in terms of color encoding). It's also useful if
+              you want to offload the intensity correction to the presenter.
 
     It is important to note that OpenGL textures have (0, 0) correspond to the
     bottom-left. The TextureSequence stimulus program will vertically flip frames in
@@ -489,6 +486,11 @@ class StimArray:
         """Raise a ValueError if there object state is found to be invalid."""
         if self._frames.ndim != 4:
             raise ValueError(f"Expected shape (f, h, w, c). {self._frames.shape=}.")
+        if self._frames.dtype not in (np.uint8, np.float16, np.float32):
+            raise ValueError(
+                f"Expected dtype uint8, float16 or float32. {self._frames.dtype=}, "
+                f"{self._frames.shape=}"
+            )
         if self.zoom < 1:
             raise ValueError(f"Zoom must be >= 1. {self.zoom=}.")
         if int(self.zoom) != self.zoom:
@@ -547,6 +549,16 @@ class StimArray:
         res = np.broadcast_shapes(self._frames.shape, self.channel_mask().shape)
         assert len(res) == 5, f"Expected (N, F, H, W, C). Got {res=}"
         return res
+
+    @property
+    def dtype(self):
+        """
+        Get the dtype of the frames array. 
+
+        The property makes it less likely you do something silly like
+        stim.frames().dtype, which will materialize the whole frame into memory.
+        """
+        return self._frames.dtype
 
     def broadcasted_view(self):
         """Get frames as shape (N, F, H, W, C) and channel mask as shape (N, F, 1, 1, C).
@@ -953,10 +965,20 @@ def _write_hdf5_v1(stim: StimArray, f, dataset_opts=None):
         dtype="uint8",
         **filter_opts(channel_mask, dataset_opts | chunk_opts(channel_mask)),
     )
+    if stim._frames.dtype not in (np.uint8, np.float16, np.float32):
+        _logger.warning(
+            f"Unexpected frames dtype {stim._frames.dtype}. Expected uint8, float16 "
+            "or float32. "
+        )
+    if stim._frames.dtype in (np.float16, np.float32):
+        if stim._frames.min() < 0 or stim._frames.max() > 1:
+            _logger.warning(
+                f"Frames are float but not in [0, 1]. min={stim._frames.min()}, "
+                f"max={stim._frames.max()}. Values might be clipped on display."
+            )
     f.create_dataset(
         "frames",
         data=stim._frames,
-        dtype="uint8",
         **filter_opts(stim._frames, dataset_opts | chunk_opts(stim._frames)),
     )
     # HDF5 supports 0-dim datasets, so we can store the float|Sequence[float] directly.
@@ -1007,31 +1029,28 @@ def get_dataset(f, key, default=None):
 def _read_hdf5_v1(f):
     """Load v1 format.
 
-    This is the current (experimental) format.
-
-    The presentation currently only supports presenting 8-bit sRGB images, and if the
-    frame dtype is not uint8, it will be converted to uint8.
-    """
+    This is the current (experimental) format."""
     ver = f.attrs["format_version"]
     if ver != "1":
         _logger.warning(f"Expected format version 1, got {ver}")
     zoom = _get_attr(f, "zoom", default=1)
-    # Keep frames as an h5py.Dataset (lazy). _write_hdf5_v1 always writes uint8
-    # (see line ~853), so this should already be uint8 for any file produced by
-    # this codebase. If a foreign file isn't uint8, materialize and convert
-    # eagerly (slow, but rare).
+    # Keep frames as an h5py.Dataset (lazy). 
     frames = f["frames"]
     frame_durations = f["frame_durations"][()]
     triggers = get_dataset(f, "triggers", default=None)
     channel_mask = get_dataset(f, "channel_mask", default=None)
     label = _get_attr(f, "label")
     metadata = dict(f["metadata"])
-    if frames.dtype != np.uint8:
-        _logger.warning(
-            f"Expected uint8 dtype, got {frames.dtype=}. Materializing and "
-            f"converting to uint8 (load will be slow for large stims)."
+    if frames.dtype == np.uint8:
+        _logger.info(
+            f"frames dtype is uint8 (interpreted as display encoded integers)"
         )
-        frames = frames[()].astype(np.uint8)
+    elif frames.dtype in (np.float16, np.float32):
+        _logger.info(f"frames dtype is float (interpreted as linear values in [0, 1])")
+    else:
+        _logger.warning(
+            f"Unexpected frames dtype {frames.dtype}. Expected uint8, float16 or float32. "
+        )
 
     return StimArray(
         frames=frames,
@@ -1207,7 +1226,7 @@ class StimProgram(Protocol):
             The rotation (degrees) to apply to the stimulus (after any mirror).
         win_id : Optional[int]
             The ID of the window this stimulus program will be presented on. If there
-            are multiple windows, then multiple program objects will be created and 
+            are multiple windows, then multiple program objects will be created and
             given different window IDs.
         """
         ...
@@ -1223,43 +1242,36 @@ class StimProgram(Protocol):
     def is_display_encoded(self) -> bool:
         """Whether values are display-ready, or need gamma encoding & quantization first.
 
-        If False, it is assumed that the stimulus has already been fully processed,
+        If True, it is assumed that the stimulus has already been fully processed,
         and the presenter will not apply any further manipulation of the values before
         sending them to the display. If False, the presenter is expected to apply gamma
         encoding and quantization according to the display's properties (e.g. sRGB's
         gamma curve for standard displays, or Texas Instrument's custom gamma curve for
         their DLPs).
 
-        This feature is not yet used by presenter code (presenters currently do not
-        apply and encoding, and thus is_display_encoded is always True in effect).
+        There are a few reasons why this feature is important.
 
-        There are a few reasons why this feature is important and should be implemented
-        in the future (and hence the forward-looking inclusion in the interface):
-
-            1. display_encoding always requires quantization to the display's bit depth.
+            1. display encoding always requires quantization to the display's bit depth.
             Different displays have different bit depths, and even the same display may
             have multiple bit depths. Allowing the presenter to do the quantization
             allows a stimulus to be agnostic to the display's bit depth.
             2. The gamma curve and color space can also vary between displays. Most
             displays expect sRGB or Rec. 709 encoded values. Texas Instruments DLPs
-            expect sRGB values but with a custom gamma curve. Similar to the bit depth,
-            allowing the presenter to do the encoding allows a stimulus to be agnostic
-            to the display's color space and gamma curve.
+            expect sRGB values but with a custom gamma curve. Similar to the bit depth
+            argument, allowing the presenter to do the encoding allows a stimulus to be
+            agnostic to the display's color space and gamma curve. 
             3. Displays may require other unique processing. For example, the DLPs do
             not have uniform illumination, and it is possible to correct for this
-            non-uniformity using measured calibration data. If this correction must
-            be applied to pre-encoded stimulus values, the values would first need to
-            be un-encoded (to a linear space), have the correction applied, and then
-            re-encoded. This has two problems: firstly, we lose precision compared to
-            if the values were never quantized in the first place, and secondly, this
+            non-uniformity using measured calibration data. If this correction must be
+            applied to pre-encoded stimulus values, the values would first need to be
+            un-encoded (to a linear space), have the correction applied, and then
+            re-encoded. This has two problems: firstly, we lose precision compared to if
+            the values were never quantized in the first place, and secondly, this
             requires having the presenter know the details of the stimulus encoding,
             thus admitting that we cannot escape the presenter from being able to
             display-encode a stimulus.
-
-        For the moment, you can simply implement this function by returning True.
         """
         ...
-
 
 
 # Just use from_script and from_hdf5. No need for protocol.
@@ -1391,7 +1403,11 @@ class TextureSequence(StimProgram):
                 assert masked_frame.shape == (H, W, C)
                 _logger.info(f"Load frame:\t {i} \t{masked_frame.shape=}")
                 tex = ctx.texture(
-                    (W, H), C, masked_frame.tobytes(), samples=0, alignment=1
+                    (W, H), C, 
+                    masked_frame,
+                    samples=0, 
+                    alignment=1,
+                    dtype=self._gl_dtype()
                 )
                 # No filtering. Expect aliasing.
                 tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
@@ -1408,6 +1424,16 @@ class TextureSequence(StimProgram):
         self._setup_done = True
         frame_times, triggers = self.stim_arr.frame_times(), self.stim_arr.triggers()
         return frame_times, triggers
+
+    def _gl_dtype(self):
+        if self.stim_arr.dtype == np.uint8:
+            return "f1"
+        elif self.stim_arr.dtype == np.float16:
+            return "f2"
+        elif self.stim_arr.dtype == np.float32:
+            return "f4"
+        else:
+            raise ValueError(f"Unsupported dtype: {self.stim_arr.dtype}")
 
     def _compile_program(self, ctx):
         """Read shaders and compile the program."""
@@ -1437,6 +1463,7 @@ class TextureSequence(StimProgram):
                     C_all,
                     samples=0,
                     alignment=1,
+                    dtype=self._gl_dtype()
                 )
                 self.single_tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
             frame = self.stim_arr.frame_at(frame_idx)
@@ -1465,6 +1492,16 @@ class TextureSequence(StimProgram):
         self._vbo = None
         if self.stim_arr is not None:
             self.stim_arr.close()
+
+    def is_display_encoded(self) -> bool:
+        """Texture sequences must be display-ready.
+
+        We can tell if a StimArray is display-encoded by checking if the frames are
+        uint8. If they are float, they are assumed to be linear values in [0, 1]
+        (according to the Open GL convention).
+        """
+        res = self.stim_arr.dtype == np.uint8
+        return res
 
 
 class ProceduralShader(StimProgram):
@@ -1564,6 +1601,14 @@ class ProceduralShader(StimProgram):
             self._vbo.release()
         self._vao = None
         self._vbo = None
+
+    def is_display_encoded(self) -> bool:
+        """Assumes the shader outputs display-ready values.
+
+        This could be changed so that we read the property from the shader's config
+        file.
+        """
+        return True
 
 
 class MoviePlayer(StimProgram):

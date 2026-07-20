@@ -11,8 +11,9 @@ import csv
 import datetime
 import logging
 from pathlib import Path
-import importlib
+import importlib.resources
 import time
+import json
 from typing import Callable, Optional, Literal
 import multiprocessing as mp
 import moderngl
@@ -103,6 +104,8 @@ def _wait_or_skip(target_time, next_frame_time: Optional[float], fps):
     return False
 
 
+COLOR_ENCODINGS = {"identity", "srgb", "ti-video-enhanced"}
+
 def make_encode_lut(encoding: str, n: int = 1024) -> np.ndarray:
     """Build a lookup table mapping linear [0,1] to display input values [0,1].
 
@@ -121,10 +124,9 @@ def make_encode_lut(encoding: str, n: int = 1024) -> np.ndarray:
     np.ndarray
         (n,) float32, lut[i] = display input for linear value i/(n-1).
     """
-    supported_encodings = {"identity", "srgb", "ti-video-enhanced"}
-    if encoding not in supported_encodings:
-        raise UnsupportedOperation(
-            f"Unsupported encoding '{encoding}'. Supported: {supported_encodings}"
+    if encoding not in COLOR_ENCODINGS:
+        raise ValueError(
+            f"Unsupported encoding '{encoding}'. Supported: {COLOR_ENCODINGS}"
         )
     ramp = np.linspace(0.0, 1.0, n)
     if encoding == "identity":
@@ -132,13 +134,16 @@ def make_encode_lut(encoding: str, n: int = 1024) -> np.ndarray:
     elif encoding == "srgb":
         lut = fpspy.color.to_srgb(ramp)
     elif encoding == "ti-video-enhanced":
-        resource_dir = importlib.resources.files("fpspy.resources")
-        with (resource_dir / DLP4500_GAMMA_RESOURCE).open("r") as f:
+        path = (
+            importlib.resources.files("fpspy.resources")
+            / "ti_video_enhanced_2-5-0-0.json"
+        )
+        with (path).open("r") as f:
             table = json.load(f)
         xs = np.asarray(table["x"])  # display input
         ys = np.asarray(table["y"])  # displayed intensity (linear)
         if np.any(np.diff(xs) < 0) or np.any(np.diff(ys) < 0):
-            raise ValueError(f"Gamma table {DLP4500_GAMMA_RESOURCE} not monotonic.")
+            raise ValueError(f"Gamma table {path} not monotonic.")
         # Invert the forward table: for each linear target, the input producing it.
         lut = np.interp(ramp, ys, xs)
     else:
@@ -165,7 +170,7 @@ class DisplayAdapter:
 
     # Post-processing shaders for the display-adaptation pass.
     VERTEX_SHADER = "display_adapter_vertex_shader.glsl"
-    FRAGMENT_SHADER = "display_adapter_fragment_shader.glsl"
+    FRAG_SHADER = "display_adapter_fragment_shader.glsl"
 
     STIM_TEX_UNIT = 0
     IMAP_TEX_UNIT = 1
@@ -182,7 +187,9 @@ class DisplayAdapter:
         intensity_map: Optional[np.ndarray] = None,
         intensity_prescale: float = 1.0,
         clip_mode: str = "pixel_rescale",
-        logger: Optional[logging.Logger] = None
+        mirror: bool = False,
+        rotation: float = 0.0,
+        logger: Optional[logging.Logger] = None,
     ):
         """
         Parameters
@@ -192,11 +199,10 @@ class DisplayAdapter:
             Framebuffer dimensions (should match window size).
         intensity_map : np.ndarray or None
             (H, W, 3) float32 array in [0, 1], where 1.0 = full intensity.
-            H, W should match the stimulus dimensions (will be resampled by
-            the GPU's texture sampler if sizes differ). None disables intensity
+            H, W should match the display dimensions. None disables intensity
             correction (a 1x1 map of ones is used, making the division a no-op).
         encoding : str
-            The display's transfer curve; one of ENCODINGS. See make_encode_lut.
+            The display's transfer curve. See make_encode_lut.
         intensity_prescale : float
             Multiplier applied before the intensity division. Values < 1.0
             leave room for the correction to boost dim regions without
@@ -207,7 +213,7 @@ class DisplayAdapter:
             - "clip": hard clamp to [0, 1]
             - "none": pass through unclamped (encode still clamps to [0, 1])
         logger:
-            If you want the DisplayAdapter to use the the presenter's logger, pass it
+            If you want the DisplayAdapter to use the presenter's logger, pass it
             in. Otherwise, it will use the module's logger.
         """
         if clip_mode not in self.CLIP_MODES:
@@ -223,38 +229,9 @@ class DisplayAdapter:
         self.fbo = ctx.framebuffer(color_attachments=[self.stim_texture])
 
         # Upload intensity map as a texture.
-        if intensity_map is None:
-            imap = np.ones((1, 1, 3), dtype=np.float32)
-        else:
-            imap = intensity_map.astype(np.float32)
-            if imap.ndim != 3:
-                raise ValueError(
-                    f"intensity_map must be 3D (H, W, C), got {imap.ndim}D"
-                )
-            if imap.shape[2] != 3:
-                raise ValueError(
-                    f"intensity_map must have 3 channels (RGB), got {imap.shape[2]}"
-                )
-            if imap.shape[0:2] != (height, width):
-                raise ValueError(
-                    f"intensity_map shape {imap.shape} does not match window size "
-                    f"({height}, {width})"
-                )
-        ih, iw = imap.shape[:2]
-        # OpenGL expects bottom-to-top row order
-        # In TextureSequence we use the vertex shader to flip the texture, but here we
-        # can't do that, as this would make the intensity map correct and the rendered
-        # stimulus upside down. So, just flip the intensity map now, once.
-        imap_flipped = np.ascontiguousarray(imap[::-1])
-        # OpenGL uses (w,h) indexing, but we don't need a transpose, as the byte layout
-        # is the same.
-        self.imap_texture = ctx.texture(
-            (iw, ih), 3, data=imap_flipped.tobytes(), dtype="f4"
+        self.imap_texture = self._make_intensity_map_texture(
+            ctx, width, height, intensity_map, mirror, rotation
         )
-        self.imap_texture.filter = (moderngl.LINEAR, moderngl.LINEAR)
-        self.imap_texture.repeat_x = False
-        self.imap_texture.repeat_y = False
-
         # Upload the encoding curve as an (N, 1) lookup-table texture.
         lut = make_encode_lut(encoding)
         self.lut_texture = ctx.texture((len(lut), 1), 1, data=lut.tobytes(), dtype="f4")
@@ -266,19 +243,17 @@ class DisplayAdapter:
         vertex_shader_path = (
             importlib.resources.files("fpspy.resources") / self.VERTEX_SHADER
         )
-        fragment_shader_path = (
-            importlib.resources.files("fpspy.resources") / self.FRAGMENT_SHADER
+        frag_shader_path = (
+            importlib.resources.files("fpspy.resources") / self.FRAG_SHADER
         )
-        vertex_shader = vertex_shader_path.read_text()
-        fragment_shader = fragment_shader_path.read_text()
-
         self.program = ctx.program(
-            vertex_shader=vertex_shader, fragment_shader=fragment_shader
+            vertex_shader=vertex_shader_path.read_text(),
+            fragment_shader=frag_shader_path.read_text(),
         )
         self.logger.info(
             f"DisplayAdapter shader compiled.\n"
             f"\tvertex shader: {vertex_shader_path}\n"
-            f"\tfragment shader: {fragment_shader_path}"
+            f"\tfragment shader: {frag_shader_path}"
         )
         self.program["stimulus_tex"].value = self.STIM_TEX_UNIT
         self.program["intensity_map_tex"].value = self.IMAP_TEX_UNIT
@@ -303,6 +278,51 @@ class DisplayAdapter:
         # fmt: on
         self.vbo = ctx.buffer(quad_verts.tobytes())
         self.vao = ctx.simple_vertex_array(self.program, self.vbo, "in_pos")
+
+    @staticmethod
+    def _make_intensity_map_texture(
+        ctx, width, height, intensity_map, mirror, rotation
+    ):
+        """Apply the window's mirror/rotation to the intensity map and upload it.
+
+        The transforms match the visual effect of the stimulus quad transform
+        (create_centered_quad): mirror is a horizontal flip, and a positive
+        rotation is counter-clockwise on screen; mirror is applied first.
+        Pixel-exact numpy flips, so only right-angle rotations are supported.
+        """
+        if intensity_map is None:
+            # No correction: a single white texel divides as a no-op.
+            # As color encoding only adapters are possible, we should still make an
+            # intensity map (identity), so that we don't need a switch in the shader.
+            imap = np.ones((1, 1, 3), dtype=np.float32)
+        else:
+            imap = intensity_map
+            if mirror:
+                imap = np.fliplr(imap)
+            if rotation % 90 != 0:
+                raise ValueError(
+                    "Only right-angle rotations are supported for the "
+                    f"intensity map. Got: {rotation}"
+                )
+            imap = np.rot90(imap, int(rotation // 90) % 4)
+            if imap.shape[:2] != (height, width):
+                raise ValueError(
+                    "Intensity map must match the window size after "
+                    f"mirror/rotation. Map (H, W): {imap.shape[:2]}, "
+                    f"window (H, W): {(height, width)}."
+                )
+        h, w, c = imap.shape
+        if c != 3:
+            raise ValueError(
+                f"Intensity map must have 3 channels (RGB). Got {c} channels."
+            )
+        # OpenGL expects bottom-to-top row order.
+        imap = np.ascontiguousarray(imap[::-1])
+        imap_texture = ctx.texture((w, h), c, data=imap.tobytes(), dtype="f4")
+        imap_texture.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        imap_texture.repeat_x = False
+        imap_texture.repeat_y = False
+        return imap_texture
 
     def render(self, ctx: moderngl.Context):
         """Draw the adapted stimulus to the currently bound framebuffer.
@@ -330,6 +350,7 @@ class DisplayAdapter:
 
 # Callback is given the frame index.
 OnTriggerCallback = Callable[[], None]
+OnMessageCallback = Callable[[str], None]
 
 
 @dataclasses.dataclass
@@ -429,7 +450,8 @@ class Presenter:
             "clear_rgba" : list of float
                 Clear color for the window as [r, g, b, a].
             "encoding": str
-                Display encoding for the window. "srgb", "ti-video-enhanced" or "none".
+                Display encoding for the window. "srgb", "ti-video-enhanced" or
+                "identity".
         """
         self.process_idx = process_idx
         self.config = config
@@ -445,6 +467,7 @@ class Presenter:
         # Callbacks. Currently only allows for one callback per event.
         # Purpose: to allow for arduino color changing.
         self._on_trigger = None
+        self._on_message = None
         self._on_stop = None
         # Play state is used when loading and stepping (not needed for one-shot play).
         self.play_state: Optional[PlayState] = None
@@ -490,11 +513,10 @@ class Presenter:
         # maps, so I've chosen to allow the config options to be None.
         window_config = config["windows"][str(self.process_idx)]
         self.encoding = window_config.get("encoding", "identity")
-        supported_encodings = {"srgb", "ti-video-enhanced", "identity"}
-        if self.encoding not in supported_encodings:
-            raise UnsupportedOperation(
+        if self.encoding not in COLOR_ENCODINGS:
+            raise ValueError(
                 f"Unsupported encoding '{self.encoding}'. Supported encodings:"
-                f"{supported_encodings}"
+                f"{COLOR_ENCODINGS}"
             )
         self.intensity_map_path = window_config.get("intensity_map_path")
         use_adapter = not (
@@ -511,6 +533,8 @@ class Presenter:
                 self.encoding,
                 intensity_map,
                 intensity_prescale,
+                mirror=self.mirror,
+                rotation=self.rotation,
             )
         else:
             self.display_adapter = None
@@ -546,6 +570,10 @@ class Presenter:
     def register_on_trigger(self, callback: OnTriggerCallback):
         """Register a callback for the after swap buffers event."""
         self._on_trigger = callback
+
+    def register_on_message(self, callback: OnMessageCallback):
+        """Register a callback for sending a message on the trigger wire."""
+        self._on_message = callback
 
     def register_on_stop(self, callback: Callable[[], None]):
         """Register a callback for the stop event."""
@@ -617,6 +645,14 @@ class Presenter:
                 # should signal that the stimulus is done playing. This is used to chain
                 # multiple stimuli in a sequence.
                 self.status_queue.put({"play_finished": self.process_idx})
+            case "message":
+                # Blocks until the Arduino has finished putting the message on
+                # the wire, so the caller knows triggering is safe again.
+                if self._on_message is not None:
+                    self._on_message(*command.args, **command.kwargs)
+                # Always answer, even with no Arduino attached: the caller waits
+                # on this before playing, and would otherwise hang.
+                self.status_queue.put({"message_sent": self.process_idx})
             case "stop":
                 do_stop = True
             case "destroy":
@@ -652,7 +688,7 @@ class Presenter:
             )
         elif has_adapter and use_adapter:
             self.logger.info(
-                "Stimulus will be adapted for display using configured display adatper."
+                "Stimulus will be adapted for display using configured display adapter."
             )
         # The presenter can delay and loop a stimulus.
         s_frames = s_frames * speed + t0
@@ -937,13 +973,15 @@ def pyglet_app(
         delay=delay,
     )
     if enable_triggers:
-        arduino = fpspy.arduino.Arduino(
+        arduino = fpspy.arduino.Arduino2(
             port=fpspy.config.get_arduino_port(config),
             baud_rate=fpspy.config.get_arduino_baud_rate(config),
             trigger_command=fpspy.config.get_arduino_trigger_command(config),
         )
         # Send arduino triggers on buffer swap
         presenter.register_on_trigger(arduino.send_trigger)
+        # Put labels on the trigger wire between stimuli.
+        presenter.register_on_message(arduino.send_text)
     presenter.run_empty()
 
 
