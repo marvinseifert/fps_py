@@ -9,7 +9,9 @@ import tkinter as tk
 from tkinter import ttk
 from pathlib import Path
 import fpspy.config
-
+import typer
+import rich
+import fpspy.stim
 
 def show_directories_help(parent_window, config):
     """Show a dialog with all important directories.
@@ -96,3 +98,27 @@ CURRENT CONFIGURATION:
     button_frame = ttk.Frame(dialog)
     button_frame.pack(pady=10)
     ttk.Button(button_frame, text="Close", command=dialog.destroy).pack()
+
+info_app = typer.Typer(help="fpspy info. Show information about stimuli.")
+@info_app.command()
+def show_info(
+        stim_path: Path = typer.Argument(
+            ...,
+            help="Path to stimulus file (.h5)",
+        ),
+):
+    """Show information about a stimulus file."""
+    # Validate stimulus path
+    if not stim_path.exists():
+        typer.echo(f"Error: stimulus file not found: {stim_path}", err=True)
+        raise typer.Exit(1)
+
+    # Load stimulus info
+    try:
+        info = fpspy.stim.StimArray.preview_hdf5(stim_path)
+    except Exception as e:
+        typer.echo(f"Error loading stimulus file: {e}", err=True)
+        raise typer.Exit(1)
+
+    # Display stimulus info
+    rich.print(info)
