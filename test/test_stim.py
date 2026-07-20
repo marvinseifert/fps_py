@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from fpspy import stim
+from fpspy.stim import StimArray, TextureSequence
 
 
 @pytest.fixture
@@ -130,3 +131,175 @@ def test_spf_to_frame_times():
     for spf in spfs:
         frame_times = stim.spf_to_frame_times(spf, n_frames)
         assert len(frame_times) == n_frames + 1
+
+
+def _make_stim_array(n_channels, channel_mask=None, dtype=np.uint8, value=None):
+    """Build a small StimArray for with_channels() tests.
+
+    F=3, H=W=2. If `value` is given, every real channel is filled with it
+    (useful for asserting exactly which channel ended up where); otherwise
+    filled with a deterministic RNG so channels are distinguishable.
+    """
+    F, H, W = 3, 2, 2
+    if value is not None:
+        frames = np.full((F, H, W, n_channels), value, dtype=dtype)
+    else:
+        rng = np.random.default_rng(0)
+        if dtype == np.uint8:
+            frames = rng.integers(0, 255, size=(F, H, W, n_channels), dtype=np.uint8)
+        else:
+            frames = rng.random((F, H, W, n_channels)).astype(dtype)
+    return StimArray(
+        frames=frames, frame_durations=1 / 60, zoom=1, channel_mask=channel_mask
+    )
+
+
+class TestWithChannels:
+    """Tests for StimArray.with_channels(): the physical-channel lookup table."""
+
+    def test_mono_no_mask_broadcast_stays_mono(self):
+        """A mono stimulus with no mask stays a real 1-channel array.
+
+        Broadcasting to multiple physical outputs happens later (at render/shader
+        time), not by materializing duplicate channels here.
+        """
+        s = _make_stim_array(n_channels=1)
+        result = s.with_channels([0, 0, 0])
+        assert result.n_channels == 1
+        np.testing.assert_array_equal(result._frames, s._frames)
+
+    def test_mono_no_mask_invalid_channel_raises(self):
+        """A mono stimulus only has index 0; requesting others is a real config error."""
+        s = _make_stim_array(n_channels=1)
+        with pytest.raises(ValueError, match=r"1, 2"):
+            s.with_channels([0, 1, 2])
+
+    def test_multichannel_selects_requested_channels(self):
+        s = _make_stim_array(n_channels=6)
+        result = s.with_channels([3, 4, 5])
+        assert result.n_channels == 3
+        np.testing.assert_array_equal(result._frames, s._frames[..., [3, 4, 5]])
+
+    def test_multichannel_out_of_range_raises(self):
+        s = _make_stim_array(n_channels=6)
+        with pytest.raises(ValueError, match=r"6, 7, 8"):
+            s.with_channels([6, 7, 8])
+
+    def test_multichannel_partial_out_of_range_raises_only_invalid(self):
+        """Only the genuinely invalid indices are named, not the valid ones too."""
+        s = _make_stim_array(n_channels=3)
+        with pytest.raises(ValueError) as exc_info:
+            s.with_channels([0, 1, 5])
+        msg = str(exc_info.value)
+        assert "5" in msg
+        assert "0" not in msg.split("exist")[0].split("[")[-1].replace("5", "")
+
+    def test_multichannel_allows_repeated_index(self):
+        """Requesting the same real channel for multiple physical outputs is fine."""
+        s = _make_stim_array(n_channels=3)
+        result = s.with_channels([2, 2, 2])
+        assert result.n_channels == 3
+        for i in range(3):
+            np.testing.assert_array_equal(result._frames[..., i], s._frames[..., 2])
+
+    def test_mono_with_mask_expands_effective_channel_count(self):
+        """A channel_mask on a mono stimulus is a broadcasting mask, not a filter:
+
+        it expands how many (virtual) channels are valid to request, without
+        changing the real, still-mono, underlying frame data.
+        """
+        mask = np.array([0, 0, 1], dtype=bool)
+        s = _make_stim_array(n_channels=1, channel_mask=mask)
+        assert s.n_channels == 3
+
+        result = s.with_channels([0, 1, 2])
+        assert result.n_channels == 3
+        # Underlying real frame data is untouched -- still genuinely mono.
+        np.testing.assert_array_equal(result._frames, s._frames)
+        np.testing.assert_array_equal(result._channel_mask, mask[[0, 1, 2]])
+
+    def test_mono_with_mask_out_of_range_raises(self):
+        mask = np.array([0, 0, 1], dtype=bool)
+        s = _make_stim_array(n_channels=1, channel_mask=mask)
+        with pytest.raises(ValueError, match=r"\[3\]"):
+            s.with_channels([0, 1, 2, 3])
+
+    def test_mono_with_mask_requesting_masked_off_channel_is_allowed(self):
+        """Requesting a masked-off (always-zero) channel is valid, not an error.
+
+        The mask zeroes data, it doesn't remove the channel -- selecting it just
+        means that physical output faithfully shows black/zero, as the mask says.
+        """
+        mask = np.array([0, 0, 1], dtype=bool)
+        s = _make_stim_array(n_channels=1, channel_mask=mask)
+        result = s.with_channels([0, 0, 0])
+        assert result.n_channels == 3
+        np.testing.assert_array_equal(
+            result._channel_mask, np.array([0, 0, 0], dtype=bool)
+        )
+
+    def test_multichannel_with_matching_mask(self):
+        """A mask the same size as a genuine multi-channel array gates those channels."""
+        mask = np.array([1, 0, 1], dtype=bool)
+        s = _make_stim_array(n_channels=3, channel_mask=mask)
+        result = s.with_channels([0, 1, 2])
+        assert result.n_channels == 3
+        np.testing.assert_array_equal(result._frames, s._frames)
+        np.testing.assert_array_equal(result._channel_mask, mask)
+
+
+class TestTextureSequenceChannels:
+    """Integration tests: TextureSequence renders the channel mapping correctly.
+
+    Uses a standalone (headless) moderngl context -- no window/display needed.
+    """
+
+    @pytest.fixture
+    def gl_ctx(self):
+        import moderngl
+
+        ctx = moderngl.create_context(standalone=True)
+        yield ctx
+        ctx.release()
+
+    def _setup_and_render(self, ctx, stim_arr, channels, size=(4, 4)):
+        prog = TextureSequence(stim_arr, lazy_textures=False)
+        color_tex = ctx.texture(size, 4)
+        fbo = ctx.framebuffer(color_attachments=[color_tex])
+        fbo.use()
+        ctx.viewport = (0, 0, *size)
+        prog.setup(ctx, size[0], size[1], channels=channels, mirror=False, rotation=0)
+        prog.render(ctx, 0, 0)
+        data = np.frombuffer(color_tex.read(), dtype=np.uint8).reshape(
+            size[1], size[0], 4
+        )
+        pixel = data[size[1] // 2, size[0] // 2]
+        prog.cleanup()
+        return pixel
+
+    def test_mono_broadcast_renders_gray_not_red(self, gl_ctx):
+        """A genuinely mono stimulus must use the mono-broadcast shader.
+
+        Regression test: fragment_shader_colour.glsl only populates the red
+        component when sampling an unswizzled single-channel texture, which
+        would render red-only instead of neutral gray.
+        """
+        value = 200
+        stim_arr = _make_stim_array(n_channels=1, dtype=np.uint8, value=value)
+        pixel = self._setup_and_render(gl_ctx, stim_arr, channels=[0, 0, 0])
+        assert pixel[0] == pixel[1] == pixel[2] == value, f"{pixel=}"
+
+    def test_multichannel_renders_each_channel_correctly(self, gl_ctx):
+        F, H, W = 1, 1, 1
+        frames = np.zeros((F, H, W, 3), dtype=np.uint8)
+        frames[0, 0, 0] = [10, 20, 30]
+        stim_arr = StimArray(frames=frames, frame_durations=1 / 60, zoom=1)
+        pixel = self._setup_and_render(gl_ctx, stim_arr, channels=[0, 1, 2])
+        assert list(pixel[:3]) == [10, 20, 30], f"{pixel=}"
+
+    def test_setup_raises_on_invalid_channels(self, gl_ctx):
+        """The original bug: a mono stimulus with a multi-channel window config."""
+        stim_arr = _make_stim_array(n_channels=1, dtype=np.uint8, value=100)
+        prog = TextureSequence(stim_arr, lazy_textures=False)
+        with pytest.raises(ValueError, match=r"1, 2"):
+            prog.setup(gl_ctx, 4, 4, channels=[0, 1, 2], mirror=False, rotation=0)

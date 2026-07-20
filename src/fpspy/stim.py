@@ -34,6 +34,7 @@ MOVIE_SUFFIXES = (".mp4", ".mkv", ".mov", ".webm")
 
 CURRENT_HDF5_FORMAT_VER = "1"
 TEXTURE_FRAG_SHADER = "fragment_shader_colour.glsl"
+MONO_FRAG_SHADER = "fragment_shader.glsl"
 QUAD_VERTEX_SHADER = "vertex_shader.glsl"
 
 
@@ -736,7 +737,29 @@ class StimArray:
         )
 
     def with_channels(self, channels):
-        """Return a new Stim object with only the specified channels.
+        """Return a new StimArray mapping physical display channels to array channels.
+
+        `channels` is a lookup table: `channels[i]` is the index (into this
+        stimulus's *effective* channel axis, i.e. `self.n_channels` — after any
+        channel_mask broadcast) that should feed physical display channel `i`.
+        Entries may repeat, e.g. `[0, 0, 0]` feeds the same array channel to all
+        three physical channels.
+
+        Every entry must be a valid index for this stimulus, i.e.
+        `0 <= entry < self.n_channels`. Requesting an index the stimulus doesn't
+        have is a configuration error (a mismatch between the window's `channels`
+        setting and the stimulus actually being played) and raises ValueError,
+        rather than being silently reinterpreted.
+
+        If this stimulus has a channel_mask, resolving that mask (which may expand
+        a single real channel out to several masked/gated virtual channels) happens
+        first, and `channels` indexes into the *resolved* axis. See stim_channels.md
+        for the full model.
+
+        If this stimulus has no channel_mask and only one real channel, the
+        returned StimArray is left genuinely single-channel — broadcasting a mono
+        stimulus to multiple physical channels is done later, at render/shader
+        time, not by materializing duplicate channels here.
 
         Parameters
         ----------
@@ -745,29 +768,28 @@ class StimArray:
 
         Returns
         -------
-        Stim
-            A new Stim object with only the specified channels.
+        StimArray
+            A new StimArray reflecting the requested channel mapping.
         """
         assert self._frames.ndim == 4, f"{self._frames.shape=}"
-        F, H, W, C = self._frames.shape
+        F, H, W, C1 = self._frames.shape
         has_mask = self._channel_mask is not None
+        n_ch = self.n_channels
+        invalid = sorted({c for c in channels if not (0 <= c < n_ch)})
+        if invalid:
+            raise ValueError(
+                f"with_channels({channels}): channel index(es) {invalid} do not "
+                f"exist on this stimulus (it has {n_ch} channel(s); frames shape="
+                f"{self._frames.shape}, {'with' if has_mask else 'without'} a "
+                f"channel mask). Fix the window's `channels` setting or the "
+                f"stimulus itself."
+            )
         new_channel_mask = self._channel_mask[..., channels] if has_mask else None
-        # If frames has shape (F, H, W, 1) (i.e. c=1), then it is monochrome and the
-        # channel mask will inflate this and determine which channels are available.
-        if C == 1:
-            requesting_only_ch0 = set(channels) == {0}
-            if not has_mask and not requesting_only_ch0:
-                raise ValueError(
-                    f"Frames has shape {self._frames.shape}, but requesting channels "
-                    f"{channels}."
-                )
-            # Frames is used as-is.
-            new_frames = self._frames
-        else:
-            # This covers two cases:
-            # 1. channel_mask is None (what we anticipate as being most common)
-            # 2. There is also a channel_mask. This is supported, but may be niche.
-            new_frames = self._frames[:, :, :, channels]
+        # A single real channel with no mask has nothing to select between: it
+        # broadcasts to whichever physical channels request it, at render time
+        # rather than by materializing copies here. Otherwise, select the
+        # requested real channels directly.
+        new_frames = self._frames if C1 == 1 else self._frames[:, :, :, channels]
         return StimArray(
             frames=new_frames,
             frame_durations=self._frame_durations,
@@ -1383,9 +1405,10 @@ class TextureSequence(StimProgram):
         if rotation is None:
             rotation = 0
 
-        # Load textures
-        N, F, H, W, C_all = self.stim_arr.shape
-        C = len(set(channels)) if channels is not None else C_all
+        # Load textures. self.stim_arr already reflects the resolved channel count
+        # (post with_channels()/mask), so its own shape is the source of truth —
+        # no need to re-derive the channel count from `channels` here.
+        N, F, H, W, C = self.stim_arr.shape
         if C > 3:
             raise ValueError(f"Too many channels requested. {C=}. Max for GLSL RGB values is 3.")
         if not self.lazy_textures:
@@ -1436,11 +1459,20 @@ class TextureSequence(StimProgram):
             raise ValueError(f"Unsupported dtype: {self.stim_arr.dtype}")
 
     def _compile_program(self, ctx):
-        """Read shaders and compile the program."""
+        """Read shaders and compile the program.
+
+        Picks the mono-broadcast fragment shader when the (resolved) stimulus has
+        a single real channel, so it displays as neutral gray on all physical
+        channels instead of red-only (an unswizzled single-channel GL texture
+        only populates the red component when sampled).
+        """
         resource_dir = importlib.resources.files("fpspy.resources")
         with (resource_dir / QUAD_VERTEX_SHADER).open("r") as vertex_file:
             vert_src = vertex_file.read()
-        with (resource_dir / TEXTURE_FRAG_SHADER).open("r") as fragment_file:
+        frag_shader = (
+            MONO_FRAG_SHADER if self.stim_arr.n_channels == 1 else TEXTURE_FRAG_SHADER
+        )
+        with (resource_dir / frag_shader).open("r") as fragment_file:
             frag_src = fragment_file.read()
         program = ctx.program(vertex_shader=vert_src, fragment_shader=frag_src)
         program["tex"].value = self.TEXTURE_UNIT
