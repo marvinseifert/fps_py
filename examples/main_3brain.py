@@ -9,7 +9,7 @@ from typing import Literal, Optional
 import numpy as np
 import fpspy.config
 import fpspy.gui
-import fpspy.play_3brain
+import fpspy.exports
 import fpspy.stim
 import fpspy.fps_queue
 import fpspy.presentation
@@ -250,7 +250,7 @@ def export(
     else:
         stim_config = None
     prog = fpspy.stim.create_program(stim_path, stim_config)
-    stim = fpspy.play_3brain.export(prog, config)
+    stim = fpspy.exports.export(prog, config)
     stim.write_hdf5(out_path)
 
 
@@ -320,5 +320,5 @@ def run_cli():
 
 
 if __name__ == "__main__":
-    _play(Path("/home/mawa/.local/share/fpspy/test_bigger.h5"), verbose=2, lazy_textures=False, enable_triggers=True)
+    _play(Path("/home/mawa/.local/share/fpspy/gaussian_checkerboard_768l-8s-10Hz-40min-p1_2_0_2_5_0.h5"), verbose=2, lazy_textures=False, enable_triggers=True)
     #gui_app()
