@@ -48,8 +48,8 @@ from pathlib import Path
 from typing import Iterable, Optional, Union
 
 import fpspy.config
-import fpspy.play_3brain
-import fpspy.queue
+#import fpspy.play_3brain
+import fpspy.fps_queue
 
 _logger = logging.getLogger(__name__)
 
@@ -137,7 +137,7 @@ def play_playlist(
         out_dir = fpspy.config.create_outdir(config)
     _logger.info(f"{out_dir} [output dir]")
 
-    processes, cmd_queues, status_queue = fpspy.play_3brain.start_presenter_processes(
+    processes, cmd_queues, status_queue = fpspy.presentation.start_presenter_processes(
         config, out_dir, delay, enable_triggers, log_level
     )
     completed_ok = False
@@ -151,7 +151,7 @@ def play_playlist(
             # and stim.delay() raises if the schedule start is in the past.
             t0 = time.perf_counter()
             for q in cmd_queues:
-                fpspy.queue.put_onto(
+                fpspy.fps_queue.put_onto(
                     q,
                     "play",
                     stim_path=Path(item.stim_path),
@@ -168,7 +168,7 @@ def play_playlist(
     finally:
         if completed_ok:
             for q in cmd_queues:
-                fpspy.queue.put_onto(q, "destroy")
+                fpspy.fps_queue.put_onto(q, "destroy")
         else:
             # A presenter died or the coordinator raised: don't leave the
             # remaining presenter windows running.
@@ -205,7 +205,7 @@ def _send_marker(cmd_queues, status_queue, processes, text: str) -> None:
     while transmitting, so a stimulus must not start until this returns.
     """
     _logger.info(f"{text} [trigger wire]")
-    fpspy.queue.put_onto(cmd_queues[0], "message", text)
+    fpspy.fps_queue.put_onto(cmd_queues[0], "message", text)
     _wait_for_status(status_queue, processes, "message_sent", 1, f"sending {text!r}")
 
 
