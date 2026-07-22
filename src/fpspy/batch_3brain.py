@@ -137,8 +137,10 @@ def play_playlist(
         out_dir = fpspy.config.create_outdir(config)
     _logger.info(f"{out_dir} [output dir]")
 
-    processes, cmd_queues, status_queue = fpspy.presentation.start_presenter_processes(
-        config, out_dir, delay, enable_triggers, log_level
+    processes, cmd_queues, reply_queues, _arduino_queue = (
+        fpspy.presentation.start_presenter_processes(
+            config, out_dir, delay, enable_triggers, log_level
+        )
     )
     completed_ok = False
     try:
@@ -146,7 +148,7 @@ def play_playlist(
             _logger.info(f"[{i + 1}/{len(items)}] {item.stim_path}")
             stim_config = item.stim_config()
             if enable_triggers and item.label is not None:
-                _send_marker(cmd_queues, status_queue, processes, start_msg(item.label))
+                _send_marker(cmd_queues, reply_queues, processes, start_msg(item.label))
             # A fresh reference time per item: frame schedules are t0-relative
             # and stim.delay() raises if the schedule start is in the past.
             t0 = time.perf_counter()
@@ -160,9 +162,9 @@ def play_playlist(
                     t0=t0,
                     close_after=False,
                 )
-            _wait_for_play_finished(status_queue, processes, item)
+            _wait_for_play_finished(reply_queues, processes, item)
             if enable_triggers and item.label is not None:
-                _send_marker(cmd_queues, status_queue, processes, end_msg(item.label))
+                _send_marker(cmd_queues, reply_queues, processes, end_msg(item.label))
             _logger.info(f"[{i + 1}/{len(items)}] finished")
         completed_ok = True
     finally:
@@ -197,7 +199,7 @@ def _check_label(label: str) -> None:
             )
 
 
-def _send_marker(cmd_queues, status_queue, processes, text: str) -> None:
+def _send_marker(cmd_queues, reply_queues, processes, text: str) -> None:
     """Put `text` on the trigger wire and block until the Arduino is done.
 
     Only the first presenter owns the Arduino (see start_presenter_processes),
@@ -206,34 +208,39 @@ def _send_marker(cmd_queues, status_queue, processes, text: str) -> None:
     """
     _logger.info(f"{text} [trigger wire]")
     fpspy.fps_queue.put_onto(cmd_queues[0], "message", text)
-    _wait_for_status(status_queue, processes, "message_sent", 1, f"sending {text!r}")
+    _wait_for_reply(reply_queues[:1], processes, "message_sent", f"sending {text!r}")
 
 
-def _wait_for_status(status_queue, processes, key: str, n: int, what: str) -> None:
-    """Block until `n` presenters report `key` on the status queue."""
-    seen = 0
-    while seen < n:
-        try:
-            msg = status_queue.get(timeout=1.0)
-        except std_queue.Empty:
-            dead = [p for p in processes if not p.is_alive()]
-            if dead:
-                raise RuntimeError(
-                    f"Presenter process died (exit code {dead[0].exitcode}) "
-                    f"while {what}. Stopping playlist."
-                )
-            continue
-        if isinstance(msg, dict) and key in msg:
-            seen += 1
-        # Other status messages (e.g. "done") are ignored.
+def _wait_for_reply(reply_queues, processes, kind: str, what: str) -> None:
+    """Block until every queue in `reply_queues` yields a reply of `kind`.
+
+    Each presenter answers on its own queue, so waiting is per-sender rather
+    than counting messages on a shared one: a reply can no longer be credited
+    to the wrong presenter, and a presenter that never answers is identified
+    by which queue is still outstanding.
+    """
+    for q in reply_queues:
+        while True:
+            try:
+                reply = fpspy.fps_queue.get_reply(q, timeout=1.0)
+            except std_queue.Empty:
+                dead = [p for p in processes if not p.is_alive()]
+                if dead:
+                    raise RuntimeError(
+                        f"Presenter process died (exit code {dead[0].exitcode}) "
+                        f"while {what}. Stopping playlist."
+                    )
+                continue
+            if reply.kind == kind:
+                break
+            # Other replies (e.g. "done") are not what this call waits for.
 
 
-def _wait_for_play_finished(status_queue, processes, item) -> None:
+def _wait_for_play_finished(reply_queues, processes, item) -> None:
     """Block until every presenter reports finishing the current item."""
-    _wait_for_status(
-        status_queue,
+    _wait_for_reply(
+        reply_queues,
         processes,
         "play_finished",
-        len(processes),
         f"playing {item.stim_path}",
     )

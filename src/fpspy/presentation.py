@@ -34,7 +34,8 @@ def present_live(
     config: dict,
     out_dir: str | Any,
     cmd_queue: Queue,
-    status_queue: Queue,
+    reply_queue: Queue,
+    arduino_queue: Queue,
     delay:float,
     enable_triggers: bool,
     log_level="INFO",
@@ -63,8 +64,13 @@ def present_live(
         Output directory for logs and output data.
     cmd_queue : multiprocessing.Queue
         Queue for receiving commands from the main process.
-    status_queue : multiprocessing.Queue
-        Queue for sending status updates to the main process.
+    reply_queue : multiprocessing.Queue
+        This presenter's own queue for answering commands. Not shared with
+        the other presenters, so the reader knows the sender from the queue.
+    arduino_queue : multiprocessing.Queue
+        Queue for the Arduino's asynchronous "done" event. Separate from
+        reply_queue because it is not an answer to any command, and would
+        otherwise desynchronise a reader counting command replies.
     delay : float
         Delay added before starting the stimulus presentation, in seconds.
     enable_triggers : bool
@@ -80,7 +86,7 @@ def present_live(
         config,
         out_dir,
         cmd_queue,
-        status_queue,
+        reply_queue,
         delay=delay,
     )
     if enable_triggers:
@@ -88,7 +94,8 @@ def present_live(
             port=fpspy.config.get_arduino_port(config),
             baud_rate=fpspy.config.get_arduino_baud_rate(config),
             trigger_command=fpspy.config.get_arduino_trigger_command(config),
-            status_queue=status_queue,
+            status_queue=arduino_queue,
+            sender_idx=process_idx,
         )
         # Triggers fire synchronously on the render loop thread (right after
         # buffer swap). Play-start/stop and forwarded "device_cmd" commands
@@ -103,11 +110,22 @@ def present_live(
 
 
 def start_presenter_processes(config, out_dir, delay, enable_triggers, log_level):
-    """Start presenter processes for all windows and return them."""
+    """Start presenter processes for all windows and return them.
+
+    Each presenter gets its own command queue and its own reply queue. The
+    reply queues are deliberately not shared: a reply is always the answer to
+    the command just sent, so one queue per presenter lets a caller wait for
+    "one reply from each" without assuming an arrival order, and without
+    replies from different windows being mistaken for one another.
+
+    The Arduino queue is shared but has a single writer (only window 1 owns
+    the Arduino), and carries only the asynchronous "arduino_done" event.
+    """
     # Create queues for inter-process communication.
     n_windows = len(config["windows"])
     cmd_queues = [mp.Queue() for _ in range(n_windows)]
-    status_queue = mp.Queue()
+    reply_queues = [mp.Queue() for _ in range(n_windows)]
+    arduino_queue = mp.Queue()
     processes = []
     for idx in range(1, len(cmd_queues) + 1):
         p = mp.Process(
@@ -117,7 +135,8 @@ def start_presenter_processes(config, out_dir, delay, enable_triggers, log_level
                 config,
                 out_dir,
                 cmd_queues[idx - 1],
-                status_queue,
+                reply_queues[idx - 1],
+                arduino_queue,
                 delay,
                 # Only enable triggers for the first window.
                 enable_triggers if idx == 1 else False,
@@ -128,7 +147,7 @@ def start_presenter_processes(config, out_dir, delay, enable_triggers, log_level
         processes.append(p)
         # Delay slightly to increase consistency of the window order in the OS.
         time.sleep(0.005)
-    return processes, cmd_queues, status_queue
+    return processes, cmd_queues, reply_queues, arduino_queue
 
 
 # TODO:
@@ -211,7 +230,7 @@ class Presenter:
         config: dict,
         out_dir: str,
         cmd_queue: Queue,
-        status_queue: Queue,
+        reply_queue: Queue,
         delay: float=10.0,
     ):
         """
@@ -223,8 +242,9 @@ class Presenter:
             Output directory for data such as dropped frames.
         cmd_queue : multiprocessing.Queue
             Queue for receiving commands from the main process.
-        status_queue : multiprocessing.Queue
-            Queue for sending status updates to the main process.
+        reply_queue : multiprocessing.Queue
+            This presenter's own queue for answering commands on. One reply
+            is emitted per command that has an answer.
         delay : float
             Delay added before starting the stimulus presentation, in seconds.
 
@@ -278,7 +298,7 @@ class Presenter:
         self.process_idx = process_idx
         self.config = config
         self.queue = cmd_queue
-        self.status_queue = status_queue
+        self.reply_queue = reply_queue
         self.out_dir = Path(out_dir)
         self.delay = delay
         self._logger: logging.LoggerAdapter | None = None
@@ -421,6 +441,14 @@ class Presenter:
             time.sleep(0.001)  # Sleep for 1 ms to avoid busy waiting
         self.close_window()
 
+    def reply(self, kind: str, **payload):
+        """Answer the command currently being handled.
+
+        Cheap enough for the render loop: Queue.put() hands off to the feeder
+        thread and returns, so it cannot block on a slow reader.
+        """
+        fpspy.fps_queue.put_reply(self.reply_queue, kind, self.process_idx, **payload)
+
     def communicate(self):
         """Check and execute commands from the main process (gui)."""
         if self.queue.empty():
@@ -446,25 +474,28 @@ class Presenter:
                 # Send back total frame count for GUI (don't show frame yet)
                 if self.play_state is not None:
                     total = len(self.play_state.frame_idxs)
-                    self.status_queue.put({"total_frames": total})
+                    self.reply("total_frames", total=total)
             case "step_next":
                 if self.play_state is not None:
                     do_stop = self.step_next(**command.kwargs)
                     # current_frame is now the frame that is displayed
                     frame_shown = self.play_state.current_frame if self.play_state else -1
-                    self.status_queue.put({"stepped": frame_shown})
+                    self.reply("stepped", frame=frame_shown)
                 else:
-                    self.status_queue.put("no_stimulus")
+                    self.reply("no_stimulus")
             case "step_prev":
                 if self.play_state is not None:
                     do_stop = self.step_prev(**command.kwargs)
                     # current_frame is now the frame that is displayed (-1 for cleared)
                     frame_shown = self.play_state.current_frame
-                    self.status_queue.put({"stepped": frame_shown})
+                    self.reply("stepped", frame=frame_shown)
                 else:
-                    self.status_queue.put("no_stimulus")
+                    self.reply("no_stimulus")
             case "play":
                 do_stop = self.play(*command.args, **command.kwargs)
+                # Answer regardless of whether the presenter is stopping: the
+                # caller uses this to chain multiple stimuli in a sequence.
+                self.reply("play_finished")
             case "stop":
                 do_stop = True
             case "destroy":
@@ -472,7 +503,7 @@ class Presenter:
         if do_stop or do_destroy:
             self.active_clear_rgba = self.clear_rgba
             self.notify_stop()
-            self.status_queue.put("done")
+            self.reply("done")
         if do_destroy:
             self.close_window()
         # shader_loop() polls this to know whether to abort mid-presentation.

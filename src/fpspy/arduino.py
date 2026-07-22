@@ -4,6 +4,8 @@ import serial
 import threading
 import time
 
+import fpspy.fps_queue
+
 
 def connect_to_arduino(port="COM3", baud_rate=9600):
     """Establish a connection to the Arduino."""
@@ -170,9 +172,13 @@ class ArduinoController:
     are RLock-protected, so both threads can share the connection.
     """
 
-    def __init__(self, port, baud_rate, trigger_command, status_queue):
+    def __init__(self, port, baud_rate, trigger_command, status_queue, sender_idx=1):
         self.arduino = create_arduino(port, baud_rate, trigger_command)
+        # A queue of its own: this controller's "done" is an asynchronous
+        # device event, not an answer to a presenter command, so it must not
+        # share the presenter's reply queue.
         self.status_queue = status_queue
+        self.sender_idx = sender_idx
         self._monitor_thread = None
         self._monitor_stop = threading.Event()
 
@@ -232,7 +238,9 @@ class ArduinoController:
             if status == "Trigger":
                 buffer = False
             if status == "finished" and not buffer:
-                self.status_queue.put("done")
+                fpspy.fps_queue.put_reply(
+                    self.status_queue, "arduino_done", self.sender_idx
+                )
                 break
             time.sleep(0.001)
 

@@ -94,7 +94,7 @@ def _play(
     t0 = time.perf_counter()
 
     # Start presenter processes, and wait to finish.
-    presenter_processes, cmd_queues, status_queue = (
+    presenter_processes, cmd_queues, reply_queues, arduino_queue = (
         fpspy.presentation.start_presenter_processes(
             config, out_dir, delay, enable_triggers, log_level
         )
@@ -285,22 +285,23 @@ def gui(
     _logging.setup_main_logging(log_level)
 
     config = fpspy.config.load_config(config_path)
-    arduino_queue = mp.Queue()  # Dummy queue for 3brain (not used)
     delay = fpspy.config.get_presentation_delay(config)
     out_dir = fpspy.config.create_outdir(config)
 
     # Start presenter processes.
-    presenter_processes, cmd_queues, status_queue = (
+    presenter_processes, cmd_queues, reply_queues, arduino_queue = (
         fpspy.presentation.start_presenter_processes(
             config, out_dir, delay, True, log_level
         )
     )
 
     # Start GUI process.
+    # NOTE: gui.py has not been ported to the per-presenter reply queues yet
+    # (it is due to be rewritten), so it is still handed a single queue here.
     n_windows = len(config["windows"])
     gui_process = mp.Process(
         target=fpspy.gui.tkinter_app,
-        args=(config, cmd_queues, arduino_queue, status_queue, n_windows),
+        args=(config, cmd_queues, arduino_queue, reply_queues[0], n_windows),
     )
     gui_process.start()
 
