@@ -29,6 +29,25 @@ from fpspy.frame_handling import _wait_or_skip
 OnTriggerCallback = Callable[[], None]
 _logger = logging.getLogger(__name__)
 
+
+def process_arduino_colours(colours: str, change_logic: int, n_patterns: int):
+    """Expand a colour spec into a per-pattern-index lookup table.
+
+    `colours` is a comma-separated list of Arduino LED commands, e.g.
+    "led_610,led_560". `change_logic` is how many consecutive pattern indices
+    share one colour, so each colour is repeated that many times and the whole
+    cycle is tiled until it covers `n_patterns` indices. The result is indexed
+    by pattern index, not by frame number.
+
+    Ported from the deleted play.py, where it was Presenter.process_arduino_colours.
+    """
+    colours = colours.split(",")
+    colour_repeats = np.ceil(n_patterns / (len(colours) * change_logic))
+    colours = np.repeat(np.asarray(colours), change_logic).tolist()
+    colours = colours * int(colour_repeats)
+    return colours
+
+
 def present_live(
     process_idx: int,
     config: dict,
@@ -104,6 +123,7 @@ def present_live(
         presenter.register_on_trigger(controller.on_trigger)
         presenter.register_on_play_start(controller.on_play_start)
         presenter.register_on_stop(controller.on_stop)
+        presenter.register_on_colour(controller.send_colour)
         presenter.register_device_handler(controller.handle_command)
     presenter.run_empty()
 
@@ -315,6 +335,7 @@ class Presenter:
         self._on_trigger: Callable | None = None
         self._on_stop: Callable |None = None
         self._on_play_start: Callable | None = None
+        self._on_colour: Callable | None = None
         self._device_handler: Callable | None = None
         # Clear color currently in effect; "white_screen" swaps it to white
         # until the next stop restores the configured color.
@@ -407,6 +428,10 @@ class Presenter:
         """Register a callback fired just before a play presentation starts."""
         self._on_play_start = callback
 
+    def register_on_colour(self, callback: Callable[[str], None]):
+        """Register a callback for LED colour changes during a presentation."""
+        self._on_colour = callback
+
     def register_device_handler(self, callback: Callable):
         """Register a handler for "device_cmd" commands from the main process."""
         self._device_handler = callback
@@ -425,6 +450,11 @@ class Presenter:
         """Notify the play-start event."""
         if self._on_play_start is not None:
             self._on_play_start()
+
+    def notify_colour(self, colour: str):
+        """Notify a colour change. `colour` is an Arduino command (e.g. "led_610")."""
+        if self._on_colour is not None:
+            self._on_colour(colour)
 
     def run_empty(self):
         """Do nothing, waiting for commands from the main process."""
@@ -502,6 +532,14 @@ class Presenter:
                 do_destroy = True
         if do_stop or do_destroy:
             self.active_clear_rgba = self.clear_rgba
+            # Return the step position to "nothing displayed", the same state
+            # step_prev() reaches when it steps back off frame 0. Without this
+            # a stop during step-play leaves the last stepped frame on screen:
+            # _is_step_play() stays true, so run_empty() keeps taking its
+            # dispatch-only branch and never clears the front buffer. The
+            # stimulus itself stays loaded, so Next shows frame 0 again.
+            if self.play_state is not None:
+                self.play_state.current_frame = -1
             self.notify_stop()
             self.reply("done")
         if do_destroy:
@@ -601,7 +639,17 @@ class Presenter:
         if state.triggers[frame]:
             self.notify_trigger()
 
-    def play(self, stim_path, stim_config, loops, t0, speed=None, close_after=False):
+    def play(
+        self,
+        stim_path,
+        stim_config,
+        loops,
+        t0,
+        speed=None,
+        close_after=False,
+        arduino_colours=None,
+        change_logic=1,
+    ):
         """Play one of the supported stimuli.
 
         Loads the shader and metadata from files, then renders the stimulus
@@ -617,20 +665,46 @@ class Presenter:
             Reference time (from time.perf_counter()).
         speed : float, optional
             Override the playback speed.
+        arduino_colours : str, optional
+            Comma-separated Arduino LED commands, e.g. "led_610,led_560". If
+            omitted, no colour commands are sent and the LEDs keep whatever
+            state they were left in.
+        change_logic : int
+            How many consecutive pattern indices share one colour. 1 means a
+            single fixed colour for the whole stimulus, sent once before the
+            first frame.
         """
         speed = speed if speed is not None else 1.0
         prog, frame_idxs, s_frames, triggers_arr = self._load(
             stim_path, stim_config, loops, t0, speed
         )
         s_frames = stim.delay(s_frames, self.delay)
+        colours = None
+        if arduino_colours is not None:
+            # Sized by pattern index, which is what the lookup is indexed by;
+            # with loops there are fewer patterns than frames.
+            n_patterns = int(np.max(frame_idxs)) + 1
+            colours = process_arduino_colours(
+                arduino_colours, change_logic, n_patterns
+            )
         self.logger.info(f"Starting in {s_frames[0] - time.perf_counter():.3f} s.")
         self.notify_play_start()
-        dropped_frames = self.shader_loop(prog, frame_idxs, s_frames, triggers_arr)
+        dropped_frames = self.shader_loop(
+            prog, frame_idxs, s_frames, triggers_arr, colours, change_logic
+        )
         self.record_dropped_frames(dropped_frames)
         prog.cleanup()
         return close_after
     # TODO:
-    def shader_loop(self, prog: stim.StimProgram, frame_idxs, s_frames, triggers):
+    def shader_loop(
+        self,
+        prog: stim.StimProgram,
+        frame_idxs,
+        s_frames,
+        triggers,
+        colours=None,
+        change_logic=1,
+    ):
         """
         Main loop for presenting the stimulus.
         """
@@ -654,6 +728,10 @@ class Presenter:
         # Skipped (and never-reached) frames stay NaN. All stats and file
         # writing happen in _save_timings(), after the loop.
         timings = np.full((N, 4), np.nan, dtype=np.float64)
+        # change_logic == 1 means one fixed colour for the whole stimulus, so
+        # it is sent once here rather than tested for on every frame.
+        if colours and change_logic == 1:
+            self.notify_colour(colours[0])
         for i in range(N):
             timings[i, 0] = time.perf_counter()
             is_exit = self.communicate()
@@ -668,6 +746,15 @@ class Presenter:
                 dropped_frames.append(i)
                 continue
             timings[i, 1] = time.perf_counter()
+
+            # Colour changes are keyed to the pattern index, not the frame
+            # number: a pattern shown for several frames changes colour once,
+            # on the frame it first appears. The bounds check covers a colour
+            # table that came out shorter than the highest pattern index.
+            if colours and change_logic > 1:
+                pattern_index = int(frame_idxs[i])
+                if pattern_index % change_logic == 0 and pattern_index < len(colours):
+                    self.notify_colour(colours[pattern_index])
 
             # Clear window (to black is fine), render the stimulus and swap buffers.
             self.window.ctx.clear(0, 0, 0)

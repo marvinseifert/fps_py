@@ -220,6 +220,22 @@ def _apply_window_defaults(config: dict) -> dict:
     return config
 
 
+def active_config_path(path: Optional[Path] = None) -> Path:
+    """The file load_config() would merge over the bundled default.
+
+    Returns the bundled default itself when there is nothing to merge, so the
+    answer is always a real file a user can open. Mirrors step 2 of
+    load_config(); keep the two in step.
+    """
+    if path is not None:
+        return path
+    user_path = user_config_file_path()
+    if user_path.exists():
+        return user_path
+    resource_dir = importlib.resources.files("fpspy.resources")
+    return Path(resource_dir / "default_settings.toml")
+
+
 def load_config(path: Optional[Path] = None, overrides: Optional[dict] = None) -> dict:
     """
     Load config with default-fallback behavior.

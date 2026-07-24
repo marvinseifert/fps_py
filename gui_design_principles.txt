@@ -1,0 +1,57 @@
+KEY DESIGN PRINCIPLES FOR A GUI
+
+1. CONSISTENCY
+- Uniform visual language (colors, typography, icons, spacing) across the interface
+- Predictable behavior - similar elements should act the same way everywhere
+- Alignment with platform conventions users already know
+
+2. VISIBILITY & FEEDBACK
+- System status should always be clear (loading states, confirmations, errors)
+- Every user action should produce a visible, timely response
+- Progress indicators for longer processes
+
+3. AFFORDANCE & SIGNIFIERS
+- Interactive elements should look interactive (buttons look clickable, links look like links)
+- Visual cues indicate what actions are possible
+- Avoid ambiguity about what's tappable/clickable vs. decorative
+
+4. SIMPLICITY & MINIMALISM
+- Show only what's necessary for the current context
+- Progressive disclosure - reveal complexity only when needed
+- Remove visual clutter that doesn't serve a function
+
+5. VISUAL HIERARCHY
+- Size, color, contrast, and placement guide the eye to what matters most
+- Group related elements; separate unrelated ones
+- Clear primary vs. secondary actions
+
+6. USER CONTROL & FREEDOM
+- Easy undo/redo and clear exit points ("emergency exits")
+- Avoid forcing users down rigid paths
+- Confirm before destructive actions
+
+7. ERROR PREVENTION & RECOVERY
+- Design to prevent mistakes before they happen (e.g., disabling invalid options)
+- Clear, human-readable error messages that explain what happened and how to fix it
+- Constraints and validation at the right moments
+
+8. RECOGNITION OVER RECALL
+- Make options, actions, and objects visible rather than requiring users to remember them
+- Use familiar icons, labels, and patterns
+
+9. FLEXIBILITY & EFFICIENCY
+- Accommodate both novice and expert users (e.g., shortcuts, customization)
+- Allow multiple paths to the same outcome where appropriate
+
+10. ACCESSIBILITY
+- Sufficient color contrast, scalable text, keyboard navigability
+- Screen-reader compatibility (semantic structure, alt text, ARIA labels)
+- Design for diverse abilities and contexts (motor, visual, cognitive)
+
+11. RESPONSIVENESS & PERFORMANCE
+- Fast load times and smooth interactions
+- Adaptive layouts across screen sizes and devices
+
+12. AESTHETIC & EMOTIONAL DESIGN
+- Clean, purposeful visual style that reinforces brand and usability (not decoration for its own sake)
+- Micro-interactions and tone that make the experience feel polished and human

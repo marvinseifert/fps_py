@@ -9,6 +9,8 @@ from typing import Literal, Optional
 import numpy as np
 import fpspy.config
 import fpspy.gui
+import fpspy.gui_client
+import fpspy.gui_qt
 import fpspy.exports
 import fpspy.stim
 import fpspy.fps_queue
@@ -310,6 +312,72 @@ def gui(
         p.join()
 
 
+def _panel(
+    config_path: Optional[Path] = None,
+    out_dir: Optional[Path] = None,
+    enable_triggers: bool = True,
+    verbose: int = 0,
+):
+    """Body of the `panel` command as a plain function with real defaults.
+
+    Same reason as _play: call this directly (e.g. from a PyCharm run/debug
+    configuration) to bypass typer's CLI parsing. Calling the decorated
+    `panel` would leave the typer.Option sentinels as parameter values.
+    """
+    log_level = "WARNING" if verbose == 0 else "INFO" if verbose == 1 else "DEBUG"
+    _logging.setup_main_logging(log_level)
+
+    config = fpspy.config.load_config(config_path)
+    delay = fpspy.config.get_presentation_delay(config)
+    if out_dir is None:
+        out_dir = fpspy.config.create_outdir(config)
+    _logger.info(f"{out_dir} [output dir]")
+
+    client = fpspy.gui_client.PresenterClient.start(
+        config, out_dir, delay, enable_triggers, log_level
+    )
+    # The panel runs in the main process: it owns the queues directly, so
+    # there is nothing to forward, and Qt gets the process's main thread.
+    # PresenterClient.shutdown() runs from the panel's closeEvent.
+    fpspy.gui_qt.qt_app(client, config, config_path)
+
+
+@gui_app.command()
+def panel(
+    config_path: Path | None = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Path to the TOML configuration file. If omitted, try loading user"
+        f"config from {fpspy.config.user_config_dir()}. If that fails, an "
+        "bundled default is used.",
+    ),
+    out_dir: Path | None = typer.Option(
+        None,
+        "--out-dir",
+        "-o",
+        help=(
+            "Directory to save logs and output data. If omitted, use "
+            f"{fpspy.config.default_log_dir()}."
+        ),
+    ),
+    enable_triggers: bool = typer.Option(
+        True,
+        "--triggers/--no-triggers",
+        help="Enable Arduino triggers during presentation.",
+    ),
+    verbose: int = typer.Option(
+        0,
+        "--verbose",
+        "-v",
+        count=True,
+        help="Increase verbosity (-v for INFO, -vv for DEBUG)",
+    ),
+):
+    """Qt instrument panel. The replacement for the tkinter `gui` command."""
+    _panel(config_path, out_dir, enable_triggers, verbose)
+
+
 def run_gui():
     gui_app()
 
@@ -321,5 +389,5 @@ def run_cli():
 
 
 if __name__ == "__main__":
-    _play(Path("/home/mawa/.local/share/fpspy/gaussian_checkerboard_768l-8s-10Hz-40min-p1_2_0_2_5_0.h5"), verbose=2, lazy_textures=False, enable_triggers=True)
-    #gui_app()
+    #_play(Path("/home/mawa/.local/share/fpspy/test.h5"), verbose=2, lazy_textures=False, enable_triggers=True)
+    _panel(verbose=2)

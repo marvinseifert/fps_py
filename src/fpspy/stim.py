@@ -1133,7 +1133,9 @@ def _read_hdf5_v0(f):
 
 def _preview_hdf5_v0(f):
     """Preview the original format."""
-    n_frames, h, w = f["Noise"][:].shape[0:3]
+    # .shape, not [:].shape: reading the array to measure it is what made
+    # previewing a large stimulus take seconds. See stim_shape_from_hdf5_v1.
+    n_frames, h, w = f["Noise"].shape[0:3]
     fps = f["Frame_Rate"][()]
     stim_duration = n_frames * (1.0 / fps)
     checkerboard_size = f["Checkerboard_Size"][()]
@@ -1194,7 +1196,7 @@ def _preview_hdf5_v1(f):
 
 def frame_times_from_hdf5_v0(f) -> np.ndarray:
     """Get frame times from v0 format HDF5 file."""
-    n_frames = f["Noise"][:].shape[0]
+    n_frames = f["Noise"].shape[0]
     fps = f["Frame_Rate"][()]
     spf = 1.0 / fps
     frame_times = spf_to_frame_times(spf, n_frames)
@@ -1203,7 +1205,10 @@ def frame_times_from_hdf5_v0(f) -> np.ndarray:
 
 def stim_shape_from_hdf5_v1(f) -> Tuple[int, int, int, int, int]:
     """Get stimulus shape from v1 format HDF5 file."""
-    F, H, W, C = f["frames"][:].shape
+    # Dataset.shape is metadata: no data is read. Slicing with [:] first would
+    # read and decompress the whole frames array only to discard it, which
+    # costs seconds on a multi-hundred-MB stimulus.
+    F, H, W, C = f["frames"].shape
     channel_mask = f.get("channel_mask", None)
     if channel_mask is not None and channel_mask.ndim == 3:
         N = channel_mask.shape[0]

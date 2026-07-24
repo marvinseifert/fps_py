@@ -36,6 +36,10 @@ class Arduino:
         self.port = port
         self.baud_rate = baud_rate
         self.trigger_command = trigger_command
+        # Holds the tail of a line that arrived split across two reads, so
+        # read_lines() can complete it on the next call. Only read_lines()
+        # uses it; read() throws the buffer away by design.
+        self._rx_buffer = ""
         self._serial = None
         self.connected = False
         self.connect()
@@ -72,6 +76,27 @@ class Arduino:
         with self._lock:
             self.send(self.trigger_command)
 
+    def read_lines(self):
+        """Read every complete line currently waiting, oldest first.
+
+        Unlike read(), nothing is dropped: this is the telemetry read, where
+        each line is an event in its own right ("Trigger", "finished", ...)
+        and losing one loses the event. A trailing partial line stays in
+        _rx_buffer and is completed by the next call.
+
+        Returns [] when nothing is waiting, so it is cheap to poll.
+        """
+        with self._lock:
+            if not self.connected:
+                return []
+            available = getattr(self._serial, "in_waiting", 0)
+            if not available:
+                return []
+            data = self._serial.read(available)
+            self._rx_buffer += data.decode("utf-8", errors="ignore")
+            *complete, self._rx_buffer = self._rx_buffer.split("\n")
+            return [line.strip() for line in complete if line.strip()]
+
     def read(self):
         """Read a line from the Arduino."""
         with self._lock:
@@ -96,6 +121,9 @@ class Arduino:
     def reset_input(self):
         with self._lock:
             self._serial.reset_input_buffer()
+            # The partial line is part of the input too; keeping it would
+            # splice pre-reset bytes onto the first line read after it.
+            self._rx_buffer = ""
 
     def flush(self):
         """Flush the serial output buffer."""
@@ -105,7 +133,11 @@ class Arduino:
     def disconnect(self):
         """Disconnect from the Arduino."""
         with self._lock:
-            self._serial.close()
+            # None when the port never opened. Reached via __del__ at garbage
+            # collection, where an AttributeError surfaces only as an
+            # unraisable-exception warning, so guard rather than let it throw.
+            if self._serial is not None:
+                self._serial.close()
             self.connected = False
             print("Arduino disconnected")
 
@@ -137,6 +169,10 @@ class DummyArduino:
         # return None or some test data
         return None
 
+    def read_lines(self):
+        # A dummy device says nothing, so the telemetry stream stays empty.
+        return []
+
     def flush(self):
         pass
 
@@ -167,20 +203,68 @@ class ArduinoController:
 
     Threading: on_play_start/on_trigger/on_stop run synchronously on the
     presenter's render loop thread (serial writes are kernel-buffered and
-    cheap). Status monitoring after a flash command runs on a background
-    thread (mirroring play.py's receive_arduino_status); Arduino's methods
-    are RLock-protected, so both threads can share the connection.
+    cheap). A reader thread runs for the controller's whole life and turns
+    every line the device prints into an event on the status queue; Arduino's
+    methods are RLock-protected, so both threads can share the connection.
     """
+
+    # Lines the firmware prints, mapped to the event kind they are reported
+    # as. Anything not listed here is still reported, as "arduino_line" — the
+    # firmware prints values as well as fixed words (LED channel, power,
+    # micros(), protocol names), and those are worth showing verbatim.
+    #
+    # "Unknown command" is not an error report. The firmware prints it only
+    # for "b", the interrupt byte, and only when "b" reached the command
+    # parser instead of being consumed mid-protocol by loop_interrupt() —
+    # i.e. when nothing was running to interrupt. on_stop sends "b" on every
+    # stop, so an idle stop prints it every time. A mistyped command, by
+    # contrast, produces no output at all.
+    LINE_EVENTS = {
+        "Stimulator ready": "arduino_ready",
+        "finished": "arduino_done",
+        "Trigger": "arduino_trigger",
+        "Trigger_test": "arduino_trigger_test",
+        "Unknown command": "arduino_unknown_command",
+    }
+
+    # The device is idle-polled at 1 Hz by its own loop(), so there is nothing
+    # to gain from reading faster than this, and the lock is shared with the
+    # render thread's send_trigger().
+    READ_INTERVAL = 0.02
 
     def __init__(self, port, baud_rate, trigger_command, status_queue, sender_idx=1):
         self.arduino = create_arduino(port, baud_rate, trigger_command)
-        # A queue of its own: this controller's "done" is an asynchronous
-        # device event, not an answer to a presenter command, so it must not
-        # share the presenter's reply queue.
+        # A queue of its own: these are asynchronous device events, not answers
+        # to presenter commands, so they must not share the presenter's reply
+        # queue.
         self.status_queue = status_queue
         self.sender_idx = sender_idx
-        self._monitor_thread = None
-        self._monitor_stop = threading.Event()
+        # Whether the port opened is the only thing about the device that is
+        # known without waiting for it to print something, and a panel that
+        # says nothing until the first line arrives is indistinguishable from
+        # one talking to a dead port. So report it immediately.
+        self._report_connection(port)
+        self._reader_stop = threading.Event()
+        self._reader_thread = threading.Thread(target=self._read_loop, daemon=True)
+        self._reader_thread.start()
+
+    def _report_connection(self, port):
+        """Announce whether there is a real device on the other end.
+
+        A DummyArduino is called out separately rather than reported as
+        connected: it accepts every command and answers nothing, so treating
+        it as a working device would make a misconfigured port look like
+        silent hardware.
+        """
+        if isinstance(self.arduino, DummyArduino):
+            kind, text = "arduino_dummy", f"No device: port is {port!r} (dummy)"
+        elif self.arduino.connected:
+            kind, text = "arduino_connected", f"Connected on {port}"
+        else:
+            kind, text = "arduino_disconnected", f"Could not open {port}"
+        fpspy.fps_queue.put_reply(
+            self.status_queue, kind, self.sender_idx, text=text
+        )
 
     def on_play_start(self):
         """Enable per-frame trigger mode. Fired just before the render loop."""
@@ -191,9 +275,16 @@ class ArduinoController:
         """Send one trigger pulse. Fired after each triggered frame's swap."""
         self.arduino.send_trigger()
 
+    def send_colour(self, colour: str):
+        """Switch the LEDs. Fired from the render loop when the colour changes.
+
+        `colour` is a firmware command such as "led_610" or "white"; it is sent
+        as-is, so an unknown one is silently ignored by the device.
+        """
+        self.arduino.send(colour)
+
     def on_stop(self):
         """Disable trigger mode and reset LEDs. Fired on stop and play end."""
-        self._stop_monitor()
         self.arduino.send("t_s_off")
         self.arduino.send("b")
         self.arduino.send("O")
@@ -201,51 +292,38 @@ class ArduinoController:
     def handle_command(self, command: str, monitor: bool = False):
         """Forward a command from the GUI/main process to the Arduino.
 
-        With monitor=True, a background thread reads the Arduino until it
-        reports "finished" and then puts "done" on the status queue. Used for
-        stimuli that run on the Arduino itself (e.g. LED flashes) while the
-        presenter shows a static screen.
+        `monitor` is accepted for callers that still pass it, but ignored: the
+        reader thread reports "finished" (as "arduino_done") whenever it
+        arrives, so there is no longer an on-demand monitor to start.
         """
         self.arduino.send(command)
-        if monitor:
-            self._start_monitor()
 
-    def _start_monitor(self):
-        self._stop_monitor()
-        self._monitor_stop.clear()
-        self._monitor_thread = threading.Thread(
-            target=self._monitor_status, daemon=True
-        )
-        self._monitor_thread.start()
+    def _read_loop(self):
+        """Report every line the device prints, as it arrives.
 
-    def _stop_monitor(self):
-        if self._monitor_thread is not None and self._monitor_thread.is_alive():
-            self._monitor_stop.set()
-            self._monitor_thread.join(timeout=2)
-        self._monitor_thread = None
-
-    def _monitor_status(self):
-        """Wait for the Arduino to report that its stimulus has finished.
-
-        A "Trigger" line marks the actual start; "finished" lines seen before
-        it are stale output from a previous run (same buffering logic as
-        play.py's receive_arduino_status).
+        Reading continuously rather than on demand means events are not missed
+        between commands, and the panel can show device state at any moment
+        instead of only while a command is outstanding.
         """
-        buffer = True
-        self.arduino.reset_input()
-        while not self._monitor_stop.is_set():
-            status = self.arduino.read()
-            if status == "Trigger":
-                buffer = False
-            if status == "finished" and not buffer:
+        while not self._reader_stop.is_set():
+            try:
+                lines = self.arduino.read_lines()
+            except Exception:
+                # A disconnected or closing port must not kill the thread and
+                # take the rest of the telemetry with it.
+                lines = []
+            for line in lines:
                 fpspy.fps_queue.put_reply(
-                    self.status_queue, "arduino_done", self.sender_idx
+                    self.status_queue,
+                    self.LINE_EVENTS.get(line, "arduino_line"),
+                    self.sender_idx,
+                    text=line,
                 )
-                break
-            time.sleep(0.001)
+            self._reader_stop.wait(self.READ_INTERVAL)
 
     def close(self):
-        self._stop_monitor()
+        self._reader_stop.set()
+        self._reader_thread.join(timeout=2)
         self.arduino.disconnect()
 
 

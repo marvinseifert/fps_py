@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 from fpspy import stim
-from fpspy.stim import StimArray, TextureSequence
+from fpspy.stim import StimArray, TextureSequence, stim_shape_from_hdf5_v1
 
 
 @pytest.fixture
@@ -348,3 +348,57 @@ class TestTextureSequenceChannels:
         prog = TextureSequence(stim_arr, lazy_textures=False)
         with pytest.raises(ValueError, match=r"1, 2"):
             prog.setup(gl_ctx, 4, 4, channels=[0, 1, 2], mirror=False, rotation=0)
+
+
+class TestPreviewDoesNotReadFrames:
+    """preview_hdf5() must read metadata only.
+
+    It is called to describe a file the user merely selected, so it has to be
+    cheap regardless of file size. It used to do `f["frames"][:].shape`, which
+    decompressed the whole array only to measure it — 2.1 s on a 750 MB
+    stimulus, on the GUI's main thread.
+
+    Timing would make a flaky test, so these assert the actual requirement:
+    the frames dataset is never sliced.
+    """
+
+    @pytest.fixture
+    def no_frame_reads(self, monkeypatch):
+        """Make any read of the frames/Noise array fail loudly."""
+        import h5py
+
+        real_getitem = h5py.Dataset.__getitem__
+        reads = []
+
+        def spy(self, key):
+            name = self.name.rsplit("/", 1)[-1]
+            reads.append(name)
+            if name in ("frames", "Noise"):
+                raise AssertionError(
+                    f"preview read the {name!r} array; it should use .shape"
+                )
+            return real_getitem(self, key)
+
+        monkeypatch.setattr(h5py.Dataset, "__getitem__", spy)
+        return reads
+
+    def test_v1_preview_reads_no_frame_data(self, tmp_path, no_frame_reads):
+        path = tmp_path / "stim.h5"
+        _make_stim_array(3).write_hdf5(path)
+        info = StimArray.preview_hdf5(path)
+        assert info["n_frames"] == 3
+        assert (info["height"], info["width"], info["channels"]) == (2, 2, 3)
+
+    def test_shape_matches_the_array_that_was_written(self, tmp_path):
+        """The cheap path must report the same shape the slow one did."""
+        path = tmp_path / "stim.h5"
+        stim_arr = _make_stim_array(2)
+        stim_arr.write_hdf5(path)
+        with h5py.File(path, "r") as f:
+            assert stim_shape_from_hdf5_v1(f)[1:] == f["frames"][:].shape
+
+    def test_frame_times_reads_no_frame_data(self, tmp_path, no_frame_reads):
+        path = tmp_path / "stim.h5"
+        _make_stim_array(1).write_hdf5(path)
+        times = StimArray.frame_times_from_hdf5(path)
+        assert len(times) == 4  # F + 1 boundaries for F=3
