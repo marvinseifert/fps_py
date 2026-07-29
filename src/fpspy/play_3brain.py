@@ -14,7 +14,7 @@ from pathlib import Path
 import importlib.resources
 import time
 import json
-from typing import Callable, Optional, Literal
+from typing import Callable, Optional, Literal, Sequence
 import multiprocessing as mp
 import moderngl
 import moderngl_window
@@ -108,6 +108,7 @@ def _wait_or_skip(target_time, next_frame_time: Optional[float], fps):
 
 
 COLOR_ENCODINGS = {"identity", "srgb", "ti-video-enhanced"}
+
 
 def make_encode_lut(encoding: str, n: int = 1024) -> np.ndarray:
     """Build a lookup table mapping linear [0,1] to display input values [0,1].
@@ -220,9 +221,12 @@ class DisplayAdapter:
             in. Otherwise, it will use the module's logger.
         """
         if clip_mode not in self.CLIP_MODES:
-            raise ValueError(f"clip_mode must be one of {list(self.CLIP_MODES)}")
+            raise ValueError(
+                f"clip_mode must be one of {list(self.CLIP_MODES)}"
+            )
         self.encoding = encoding
         self.intensity_prescale = intensity_prescale
+
         self.clip_mode = clip_mode
         self.logger = logger or _logger
 
@@ -237,7 +241,9 @@ class DisplayAdapter:
         )
         # Upload the encoding curve as an (N, 1) lookup-table texture.
         lut = make_encode_lut(encoding)
-        self.lut_texture = ctx.texture((len(lut), 1), 1, data=lut.tobytes(), dtype="f4")
+        self.lut_texture = ctx.texture(
+            (len(lut), 1), 1, data=lut.tobytes(), dtype="f4"
+        )
         self.lut_texture.filter = (moderngl.LINEAR, moderngl.LINEAR)
         self.lut_texture.repeat_x = False
         self.lut_texture.repeat_y = False
@@ -477,7 +483,9 @@ class Presenter:
 
     def _is_step_play(self):
         """Check if we are in step-play mode."""
-        return self.play_state is not None and self.play_state.current_frame >= 0
+        return (
+            self.play_state is not None and self.play_state.current_frame >= 0
+        )
 
     def setup_window(self, config):
         settings.WINDOW["class"] = "moderngl_window.context.pyglet.Window"
@@ -507,7 +515,10 @@ class Presenter:
                 "intensity when displayed. 50% grey in sRGB is ~0.73."
             )
         self.window = moderngl_window.create_window_from_settings()
-        self.window.position = (window_config["x_shift"], window_config["y_shift"])
+        self.window.position = (
+            window_config["x_shift"],
+            window_config["y_shift"],
+        )
         self.window.init_mgl_context()
         self.window.set_default_viewport()
 
@@ -665,6 +676,7 @@ class Presenter:
             self.status_queue.put("done")
         if do_destroy:
             self.close_window()
+        return do_destroy
 
     def _load(self, stim_path, stim_config, loops, t0, speed):
         """Load a stimuli; shared by load() and play()."""
@@ -695,7 +707,9 @@ class Presenter:
             )
         # The presenter can delay and loop a stimulus.
         s_frames = s_frames * speed + t0
-        frame_idxs, s_frames, triggers = fpspy.stim.loop(s_frames, triggers, loops)
+        frame_idxs, s_frames, triggers = fpspy.stim.loop(
+            s_frames, triggers, loops
+        )
         triggers_arr = stim.decompress_triggers(triggers, len(frame_idxs))
         assert len(frame_idxs) == len(s_frames) - 1
         return prog, frame_idxs, s_frames, triggers_arr
@@ -792,7 +806,9 @@ class Presenter:
         if state.triggers[frame]:
             self.notify_trigger()
 
-    def play(self, stim_path, stim_config, loops, t0, speed=None, close_after=False):
+    def play(
+        self, stim_path, stim_config, loops, t0, speed=None, close_after=False
+    ):
         """Play one of the supported stimuli.
 
         Loads the shader and metadata from files, then renders the stimulus
@@ -814,13 +830,19 @@ class Presenter:
             stim_path, stim_config, loops, t0, speed
         )
         s_frames = stim.delay(s_frames, self.delay)
-        self.logger.info(f"Starting in {s_frames[0] - time.perf_counter():.3f} s.")
-        dropped_frames = self.shader_loop(prog, frame_idxs, s_frames, triggers_arr)
+        self.logger.info(
+            f"Starting in {s_frames[0] - time.perf_counter():.3f} s."
+        )
+        dropped_frames = self.shader_loop(
+            prog, frame_idxs, s_frames, triggers_arr
+        )
         self.record_dropped_frames(dropped_frames)
         prog.cleanup()
         return close_after
 
-    def shader_loop(self, prog: stim.StimProgram, frame_idxs, s_frames, triggers):
+    def shader_loop(
+        self, prog: stim.StimProgram, frame_idxs, s_frames, triggers
+    ):
         """
         Main loop for presenting the stimulus.
         """
@@ -844,7 +866,8 @@ class Presenter:
                 return dropped_frames
 
             # Sync frame presentation to the scheduled time.
-            next_frame_time = s_frames[i + 1] if i < N - 1 else None
+            # There is always N+1 s_frames.
+            next_frame_time = s_frames[i + 1]
             skip = _wait_or_skip(s_frames[i], next_frame_time, self.fps)
             if skip:
                 dropped_frames.append(i)
@@ -854,6 +877,7 @@ class Presenter:
             self.window.swap_buffers()
             if triggers[i]:
                 self.notify_trigger()
+        _wait_or_skip(s_frames[-1], None, self.fps)
         return dropped_frames
 
     def record_dropped_frames(self, dropped_frames):
@@ -867,7 +891,9 @@ class Presenter:
         with open(out_path, "w", newline="") as f:
             res = np.array(dropped_frames, copy=False)
             np.savetxt(f, res, fmt="%d", delimiter=",")
-        self.logger.warning(f"Dropped frames: {dropped_frames}\t(saved to {out_path})")
+        self.logger.warning(
+            f"Dropped frames: {dropped_frames}\t(saved to {out_path})"
+        )
 
 
 def write_log(
@@ -1058,9 +1084,9 @@ class ArrayRenderer:
 
         # Save frames
         if convert_to_srgb:
-            arr = (fpspy.color.to_srgb(arr.astype(np.float32) / 255.0) * 255.0).astype(
-                np.uint8
-            )
+            arr = (
+                fpspy.color.to_srgb(arr.astype(np.float32) / 255.0) * 255.0
+            ).astype(np.uint8)
         _logger.info(
             f"Rendered {len(frame_idxs)} frames to array, with {len(triggers)} "
             f"triggers, for window {self.process_idx}."
@@ -1098,7 +1124,9 @@ class ArrayRenderer:
             shader.render(self.ctx, frame_idx, i)
             # Read pixels from the FBO
             data = fbo_texture.read()
-            frame = np.frombuffer(data, dtype=np.uint8).reshape(height, width, 4)
+            frame = np.frombuffer(data, dtype=np.uint8).reshape(
+                height, width, 4
+            )
             # Keep RGB channels only
             frames[i] = frame[:, :, :3]
         fbo.release()
@@ -1164,7 +1192,9 @@ def validate_stim(stim_path, stim_config) -> bool:
     return False
 
 
-def start_presenter_processes(config, out_dir, delay, enable_triggers, log_level):
+def start_presenter_processes(
+    config, out_dir, delay, enable_triggers, log_level
+):
     """Start presenter processes for all windows and return them."""
     # Create queues for inter-process communication.
     n_windows = len(config["windows"])
