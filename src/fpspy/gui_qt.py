@@ -26,7 +26,7 @@ import logging
 import signal
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from PyQt6.QtCore import QSize, Qt, QTimer
 from PyQt6.QtWidgets import (
@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QHeaderView,
     QFileDialog,
     QGridLayout,
@@ -59,6 +60,7 @@ import numpy as np
 
 import fpspy.arduino_commands as arduino_commands
 import fpspy.config
+import fpspy.generators
 import fpspy.stim
 from fpspy.gui_client import PresenterClient
 
@@ -222,6 +224,7 @@ class InstrumentPanel(QMainWindow):
 
         tabs = QTabWidget()
         tabs.addTab(self._build_instrument_tab(), "Instrument")
+        tabs.addTab(self._build_generation_tab(), "Generation")
         tabs.addTab(self._build_settings_tab(), "Settings")
         self.setCentralWidget(tabs)
 
@@ -245,6 +248,125 @@ class InstrumentPanel(QMainWindow):
         layout.addWidget(self._build_transport_group())
         layout.addWidget(self._build_windows_group())
         return tab
+
+    def _build_generation_tab(self) -> QWidget:
+        """One form per registered generator (fpspy.generators.REGISTRY).
+
+        Adding a new stimulus template means registering it there; this tab
+        does not change.
+        """
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+
+        intro = QLabel(
+            f"Writes into the stimulus folder shown in the Instrument tab: "
+            f"{self.stim_dir}"
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet(_MUTED)
+        layout.addWidget(intro)
+
+        for generator in fpspy.generators.REGISTRY.values():
+            layout.addWidget(self._build_generator_group(generator))
+        layout.addStretch()
+        return tab
+
+    def _build_generator_group(self, generator: fpspy.generators.Generator) -> QGroupBox:
+        group = QGroupBox(generator.name)
+        form = QGridLayout(group)
+
+        row = 0
+        form.addWidget(QLabel("File name:"), row, 0)
+        name_edit = QLineEdit(generator.key)
+        form.addWidget(name_edit, row, 1, 1, 3)
+        row += 1
+
+        getters: dict[str, Callable[[], object]] = {}
+        widgets: dict[str, object] = {}
+        for param in generator.params:
+            form.addWidget(QLabel(param.label + ":"), row, 0)
+            if param.kind == "bool":
+                widget = QCheckBox()
+                widget.setChecked(bool(param.default))
+                getters[param.name] = widget.isChecked
+            elif param.kind == "int":
+                widget = QSpinBox()
+                widget.setRange(int(param.minimum), int(param.maximum))
+                widget.setValue(int(param.default))
+                getters[param.name] = widget.value
+            elif param.kind == "float":
+                widget = QDoubleSpinBox()
+                widget.setDecimals(3)
+                widget.setRange(float(param.minimum), float(param.maximum))
+                widget.setValue(float(param.default))
+                getters[param.name] = widget.value
+            else:  # "choice": valid values depend on another field's value.
+                widget = QComboBox()
+                dep_widget = widgets[param.depends_on]
+                dep_getter = getters[param.depends_on]
+
+                def refresh_choices(
+                    widget=widget,
+                    param=param,
+                    dep_getter=dep_getter,
+                ):
+                    # Keep the current selection if it's still valid, so
+                    # editing an unrelated field doesn't reset this one.
+                    previous = widget.currentData()
+                    choices = param.choices_fn(dep_getter())
+                    widget.blockSignals(True)
+                    widget.clear()
+                    for choice in choices:
+                        widget.addItem(str(choice), choice)
+                    widget.setEnabled(bool(choices))
+                    idx = widget.findData(previous)
+                    widget.setCurrentIndex(idx if idx >= 0 else 0)
+                    widget.blockSignals(False)
+
+                refresh_choices()
+                if isinstance(dep_widget, QCheckBox):
+                    dep_widget.stateChanged.connect(lambda *_: refresh_choices())
+                else:
+                    dep_widget.valueChanged.connect(lambda *_: refresh_choices())
+                # currentData() is None for an empty (no valid choice) combo.
+                getters[param.name] = widget.currentData
+            if param.tooltip:
+                widget.setToolTip(param.tooltip)
+            widgets[param.name] = widget
+            form.addWidget(widget, row, 1, 1, 3)
+            row += 1
+
+        status_label = QLabel("")
+        status_label.setWordWrap(True)
+        form.addWidget(status_label, row, 0, 1, 4)
+        row += 1
+
+        generate_btn = QPushButton("Generate")
+        form.addWidget(generate_btn, row, 3)
+
+        def on_generate():
+            generate_btn.setEnabled(False)
+            generate_btn.setText("Generating…")
+            QApplication.processEvents()
+            try:
+                kwargs = {name: getter() for name, getter in getters.items()}
+                path = generator.generate(self.stim_dir, name_edit.text(), **kwargs)
+            except Exception as e:
+                _logger.exception(f"Generator {generator.key!r} failed")
+                status_label.setText(f"Failed: {e}")
+                status_label.setStyleSheet(_WARN)
+            else:
+                status_label.setText(f"Wrote {path.name}")
+                status_label.setStyleSheet(_OK)
+                self._refresh_file_list()
+            finally:
+                generate_btn.setEnabled(True)
+                generate_btn.setText("Generate")
+
+        generate_btn.clicked.connect(on_generate)
+        return group
 
     def _build_settings_tab(self) -> QWidget:
         """Show the settings actually in force, and where they came from.

@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 import h5py
 from pathlib import Path
@@ -25,7 +26,9 @@ def checkerboard(checker_size, width_in_pixels, height_in_pixels):
     pattern_width = width_in_pixels // checker_size
     pattern_height = height_in_pixels // checker_size
 
-    pattern_shape = (pattern_width, pattern_height)
+    # (rows, cols) = (height, width), to match the (frames, height, width, ...)
+    # convention the rest of the pipeline expects (see stim.py's _read_hdf5_v0).
+    pattern_shape = (pattern_height, pattern_width)
     pattern = np.random.randint(0, 2, pattern_shape, dtype=np.uint8) * 255
     pattern_texture = np.repeat(
         np.repeat(pattern, checker_size, axis=0), checker_size, axis=1
@@ -165,8 +168,9 @@ def multicolor_checkerboard(
     # Generate random binary pattern for each channel
     channels = []
     for _ in range(num_channels):
+        # (rows, cols) = (height, width), matching checkerboard() above.
         pattern = (
-            np.random.randint(0, 2, (pattern_width, pattern_height), dtype=np.uint8)
+            np.random.randint(0, 2, (pattern_height, pattern_width), dtype=np.uint8)
             * 255
         )
         pattern_texture = np.repeat(
@@ -174,14 +178,8 @@ def multicolor_checkerboard(
         )
         channels.append(pattern_texture)
 
-    # Stack channels and reshape to create a multi-colored pattern
+    # Stack channels to create a multi-colored pattern: (height, width, num_channels).
     multi_color_pattern = np.stack(channels, axis=-1)
-
-    # If there are more than 3 channels, reshape to ensure correct image format
-    if num_channels > 3:
-        multi_color_pattern = multi_color_pattern.reshape(
-            (height_in_pixels, width_in_pixels, num_channels)
-        )
 
     return multi_color_pattern
 
@@ -208,7 +206,7 @@ def generate_and_store_3d_array_multicolour(
     """
 
     patterns_list = [
-        generate_multicolor_checkerboard_pattern(
+        multicolor_checkerboard(
             checkerboard_size, width_in_pixels, height_in_pixels
         )
         for _ in range(frames)
