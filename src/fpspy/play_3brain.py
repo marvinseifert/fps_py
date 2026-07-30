@@ -481,6 +481,8 @@ class Presenter:
         # Play state is used when loading and stepping (not needed for one-shot play).
         self.play_state: Optional[PlayState] = None
 
+        self.init_screen()
+
     def _is_step_play(self):
         """Check if we are in step-play mode."""
         return (
@@ -602,6 +604,17 @@ class Presenter:
         """Notify the trigger event."""
         if self._on_trigger is not None:
             self._on_trigger()
+
+    def init_screen(self):
+        """Clear the screen to the clear_rgba color.
+
+        This function should be called as the last step of initialization,
+        so that there is as little time as possible between when the program
+        starts and the correct clear_rgba color is set.
+        """
+        self.window.use()
+        self.window.ctx.clear(*self.clear_rgba)
+        self.window.swap_buffers()
 
     def run_empty(self):
         """Do nothing, waiting for commands from the main process."""
