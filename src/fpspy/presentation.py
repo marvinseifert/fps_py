@@ -764,6 +764,10 @@ class Presenter:
             timings[i, 3] = time.perf_counter()
             if triggers[i]:
                 self.notify_trigger()
+        # The loop above only ever waits for a frame's onset (s_frames[i]);
+        # without this, the last frame's scheduled display duration is never
+        # honored and shader_loop returns as soon as it's swapped in.
+        _wait_or_skip(s_frames[-1], None, self.fps, self.logger)
         self._save_timings(timings, s_frames)
         return dropped_frames
 
