@@ -42,6 +42,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("scf", "Play single chromatic full-field flashes for all LEDs sequentially."),
     ("wscf", "Play single chromatic full-field flashes for all LEDs sequentially with white."),
     ("scf_non_uv", "Play single chromatic full-field flashes for all LEDs except UV."),
+    ("pcf", "Play pulse chromatic full-field flashes for all LEDs sequentially."),
     ("a", "Switch on all LEDs at max power for a specified interval."),
     ("off", "Switch off all LEDs."),
     ("forever", "Switch on custom LEDs continuously based on multiple serial arguments."),
