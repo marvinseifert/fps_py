@@ -8,6 +8,42 @@ import hdf5plugin
 # %%
 
 
+def _checker_dims(checker_size, width_in_pixels, height_in_pixels):
+    """(pattern_height, pattern_width) in checker cells, or raise.
+
+    width_in_pixels/height_in_pixels not dividing evenly would otherwise be
+    silently truncated by `//` — the stored pattern would then not actually
+    fill the requested canvas. Raising here also lets `zoom` (StimArray)
+    reconstruct the exact requested resolution from a low-res pattern.
+    """
+    if width_in_pixels % checker_size or height_in_pixels % checker_size:
+        raise ValueError(
+            f"width_in_pixels ({width_in_pixels}) and height_in_pixels "
+            f"({height_in_pixels}) must both be evenly divisible by "
+            f"checker_size ({checker_size})."
+        )
+    return height_in_pixels // checker_size, width_in_pixels // checker_size
+
+
+def checkerboard_lowres(checker_size, width_in_pixels, height_in_pixels):
+    """One random element per checker cell — no pixel-level expansion.
+
+    (rows, cols) = (height, width), to match the (frames, height, width, ...)
+    convention the rest of the pipeline expects (see stim.py's _read_hdf5_v0).
+
+    Meant to be paired with StimArray's `zoom=checker_size`: much cheaper to
+    store than `checkerboard()`'s pre-expanded array, with the presenter
+    doing the (uniform, nearest-neighbour) upscaling on display. Only valid
+    when every checker cell really is a single uniform value in the final
+    image — e.g. not after `shuffle_noise.shuffle_pattern`, whose sub-cell
+    roll breaks that uniformity and requires the full-resolution array.
+    """
+    pattern_height, pattern_width = _checker_dims(
+        checker_size, width_in_pixels, height_in_pixels
+    )
+    return np.random.randint(0, 2, (pattern_height, pattern_width), dtype=np.uint8) * 255
+
+
 def checkerboard(checker_size, width_in_pixels, height_in_pixels):
     """
     Generate a checkerboard pattern with a given checker size and dimensions.
@@ -22,14 +58,7 @@ def checkerboard(checker_size, width_in_pixels, height_in_pixels):
         The height of the pattern in pixels.
 
     """
-    # Calculate the number of squares based on pixel resolution
-    pattern_width = width_in_pixels // checker_size
-    pattern_height = height_in_pixels // checker_size
-
-    # (rows, cols) = (height, width), to match the (frames, height, width, ...)
-    # convention the rest of the pipeline expects (see stim.py's _read_hdf5_v0).
-    pattern_shape = (pattern_height, pattern_width)
-    pattern = np.random.randint(0, 2, pattern_shape, dtype=np.uint8) * 255
+    pattern = checkerboard_lowres(checker_size, width_in_pixels, height_in_pixels)
     pattern_texture = np.repeat(
         np.repeat(pattern, checker_size, axis=0), checker_size, axis=1
     )
@@ -139,6 +168,21 @@ def generate_and_store_video(
     # Bla
 
 
+def multicolor_checkerboard_lowres(
+    checker_size, width_in_pixels, height_in_pixels, num_channels=6
+):
+    """One random element per checker cell per channel — see checkerboard_lowres()."""
+    pattern_height, pattern_width = _checker_dims(
+        checker_size, width_in_pixels, height_in_pixels
+    )
+    channels = [
+        np.random.randint(0, 2, (pattern_height, pattern_width), dtype=np.uint8) * 255
+        for _ in range(num_channels)
+    ]
+    # (height, width, num_channels).
+    return np.stack(channels, axis=-1)
+
+
 def multicolor_checkerboard(
     checker_size, width_in_pixels, height_in_pixels, num_channels=6
 ):
@@ -161,27 +205,10 @@ def multicolor_checkerboard(
     pattern_texture : ndarray
         The checkerboard pattern as a NumPy array.
     """
-    # Calculate the number of squares based on pixel resolution
-    pattern_width = width_in_pixels // checker_size
-    pattern_height = height_in_pixels // checker_size
-
-    # Generate random binary pattern for each channel
-    channels = []
-    for _ in range(num_channels):
-        # (rows, cols) = (height, width), matching checkerboard() above.
-        pattern = (
-            np.random.randint(0, 2, (pattern_height, pattern_width), dtype=np.uint8)
-            * 255
-        )
-        pattern_texture = np.repeat(
-            np.repeat(pattern, checker_size, axis=0), checker_size, axis=1
-        )
-        channels.append(pattern_texture)
-
-    # Stack channels to create a multi-colored pattern: (height, width, num_channels).
-    multi_color_pattern = np.stack(channels, axis=-1)
-
-    return multi_color_pattern
+    pattern = multicolor_checkerboard_lowres(
+        checker_size, width_in_pixels, height_in_pixels, num_channels
+    )
+    return np.repeat(np.repeat(pattern, checker_size, axis=0), checker_size, axis=1)
 
 
 def generate_and_store_3d_array_multicolour(

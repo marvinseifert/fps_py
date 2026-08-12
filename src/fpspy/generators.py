@@ -16,8 +16,11 @@ import importlib.util
 from pathlib import Path
 from typing import Callable, Optional, Union
 
+import numpy as np
+
 import fpspy.create_noise
 import fpspy.shuffle_noise
+import fpspy.stim
 
 
 @dataclasses.dataclass(frozen=True)
@@ -81,20 +84,60 @@ def _generate_bw_noise(
     # Pattern-change rate (frequency) times duration is the number of distinct
     # patterns needed; each is stored once and played at `frequency` fps. See
     # GUI_workplan.md — the old tkinter GUI multiplied by an extra, wrong 60.
-    frames = max(1, round(duration * frequency))
+    n_frames = max(1, round(duration * frequency))
+
     if shuffle:
         if shuffle_step is None:
             raise ValueError(
                 f"No valid shuffle step for checker_size={checker_size} "
                 "(checker must be at least 3px to shuffle at all)."
             )
-        fpspy.shuffle_noise.generate_and_store_3d_array(
-            frames, checker_size, width, height, frequency, shuffle_step, name=path
+        # A sub-cell roll (shuffle_pattern) breaks the "one uniform value per
+        # checker cell" assumption zoom relies on — after the roll, a cell
+        # can straddle two different original values — so this can't be
+        # stored zoomed; it needs the full pre-expanded resolution.
+        frames = np.stack(
+            [
+                fpspy.shuffle_noise.shuffle_pattern(
+                    fpspy.create_noise.checkerboard(checker_size, width, height),
+                    checker_size,
+                    shuffle_step,
+                )
+                for _ in range(n_frames)
+            ],
+            axis=0,
         )
+        zoom = 1
+        label = f"BW checkerboard noise, {checker_size}px, shuffled (step={shuffle_step})"
     else:
-        fpspy.create_noise.generate_and_store_3d_array(
-            frames, checker_size, width, height, frequency, name=path
+        # Not shuffled: every checker cell is one uniform value, so one
+        # array element per cell plus zoom=checker_size reconstructs the
+        # same image at display time, for a much smaller file.
+        frames = np.stack(
+            [
+                fpspy.create_noise.checkerboard_lowres(checker_size, width, height)
+                for _ in range(n_frames)
+            ],
+            axis=0,
         )
+        zoom = checker_size
+        label = f"BW checkerboard noise, {checker_size}px"
+
+    frames = frames[..., np.newaxis]  # (F, H, W) -> (F, H, W, 1): broadcasts to all channels.
+
+    stim_array = fpspy.stim.StimArray(
+        frames,
+        frame_durations=1.0 / frequency,
+        zoom=zoom,
+        triggers=None,
+        label=label,
+        metadata={
+            "checker_size": checker_size,
+            "shuffle": shuffle,
+            **({"shuffle_step": shuffle_step} if shuffle else {}),
+        },
+    )
+    stim_array.write_hdf5(path)
     return path
 
 

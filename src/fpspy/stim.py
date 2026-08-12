@@ -1089,7 +1089,7 @@ def _read_hdf5_v1(f):
     triggers = get_dataset(f, "triggers", default=None)
     channel_mask = get_dataset(f, "channel_mask", default=None)
     label = _get_attr(f, "label")
-    metadata = dict(f["metadata"])
+    metadata = dict(f["metadata"].attrs)
     if frames.dtype == np.uint8:
         _logger.info(
             f"frames dtype is uint8 (interpreted as display encoded integers)"
@@ -1169,7 +1169,7 @@ def _preview_hdf5_v1(f):
     channel_mask = f.get("channel_mask", None)
     channel_mask_shape = channel_mask.shape if channel_mask is not None else None
     zoom = _get_attr(f, "zoom", default=1)
-    metadata = dict(f["metadata"])
+    metadata = dict(f["metadata"].attrs)
     frame_times = frame_times_from_hdf5_v1(f)
     duration = frame_times[-1]
     if f["frame_durations"].ndim == 0:
