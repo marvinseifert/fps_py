@@ -176,6 +176,38 @@ _WARN = "color: #cc4400; font-weight: bold;"
 _MUTED = "color: palette(placeholder-text);"
 
 
+def _size_to_current_page(tabs: QTabWidget, on_change: Callable[[], None]) -> None:
+    """Let a tab widget shrink to the page that is actually in front.
+
+    A QTabWidget's size hint is the largest of all its pages, so one tall
+    form pins the whole window's minimum height even while a short tab is
+    shown. Telling the hidden pages to have their hints ignored makes the tab
+    widget ask for the page on screen and nothing more. `on_change` is called
+    afterwards so the window can recompute its own minimum for the new page.
+    """
+
+    def apply(index: int) -> None:
+        for i in range(tabs.count()):
+            page = tabs.widget(i)
+            policy = (
+                QSizePolicy.Policy.Preferred
+                if i == index
+                else QSizePolicy.Policy.Ignored
+            )
+            page.setSizePolicy(policy, policy)
+        if (current := tabs.widget(index)) is not None:
+            current.adjustSize()
+        # The layouts between here and the window only recompute what they
+        # need when Qt gets round to the layout request this just posted, so
+        # asking now would answer for the tab we came from. Ask again once
+        # that has happened.
+        on_change()
+        QTimer.singleShot(0, on_change)
+
+    tabs.currentChanged.connect(apply)
+    apply(tabs.currentIndex())
+
+
 class InstrumentPanel(QMainWindow):
     """The main window: device state, stimulus transport, window state."""
 
@@ -232,11 +264,21 @@ class InstrumentPanel(QMainWindow):
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready")
 
-        # Ask the finished layout what it needs rather than hardcoding a size
-        # that silently stops being right when a widget is added: below this,
-        # Qt starts overlapping widgets instead of shrinking them.
-        self.setMinimumSize(self.minimumSizeHint())
+        # The minimum follows the tab in front instead of the tallest tab, so
+        # a long generator form no longer decides how small the window can be
+        # made while the Instrument tab is shown.
+        _size_to_current_page(tabs, self._update_minimum_size)
         self.resize(self.minimumSizeHint().expandedTo(QSize(940, 900)))
+
+    def _update_minimum_size(self):
+        """Ask the layout what the visible page needs, and allow no less.
+
+        Recomputed on every tab switch rather than once at startup: the answer
+        changes with the page, and hardcoding a size silently stops being
+        right when a widget is added. Below this, Qt starts overlapping
+        widgets instead of shrinking them.
+        """
+        self.setMinimumSize(self.minimumSizeHint())
 
     def _build_instrument_tab(self) -> QWidget:
         tab = QWidget()
@@ -250,10 +292,12 @@ class InstrumentPanel(QMainWindow):
         return tab
 
     def _build_generation_tab(self) -> QWidget:
-        """One form per registered generator (fpspy.generators.REGISTRY).
+        """One sub-tab per registered generator (fpspy.generators.REGISTRY).
 
         Adding a new stimulus template means registering it there; this tab
-        does not change.
+        does not change. The forms are sub-tabs rather than a single column
+        because stacked they are taller than a short screen, and only one is
+        ever being filled in at a time.
         """
         tab = QWidget()
         layout = QVBoxLayout(tab)
@@ -268,14 +312,28 @@ class InstrumentPanel(QMainWindow):
         intro.setStyleSheet(_MUTED)
         layout.addWidget(intro)
 
+        generator_tabs = QTabWidget()
         for generator in fpspy.generators.REGISTRY.values():
-            layout.addWidget(self._build_generator_group(generator))
+            generator_tabs.addTab(
+                self._build_generator_page(generator), generator.name
+            )
+        # Same reason as the top-level tab bar: without this the Generation
+        # tab is always as tall as its longest form, whichever one is shown.
+        _size_to_current_page(generator_tabs, self._update_minimum_size)
+        layout.addWidget(generator_tabs)
         layout.addStretch()
         return tab
 
-    def _build_generator_group(self, generator: fpspy.generators.Generator) -> QGroupBox:
-        group = QGroupBox(generator.name)
-        form = QGridLayout(group)
+    def _build_generator_page(self, generator: fpspy.generators.Generator) -> QWidget:
+        # No group box title: the sub-tab already carries the generator name.
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(10, 10, 10, 10)
+        form_widget = QWidget()
+        form = QGridLayout(form_widget)
+        form.setContentsMargins(0, 0, 0, 0)
+        page_layout.addWidget(form_widget)
+        page_layout.addStretch()
 
         row = 0
         form.addWidget(QLabel("File name:"), row, 0)
@@ -366,7 +424,7 @@ class InstrumentPanel(QMainWindow):
                 generate_btn.setText("Generate")
 
         generate_btn.clicked.connect(on_generate)
-        return group
+        return page
 
     def _build_settings_tab(self) -> QWidget:
         """Show the settings actually in force, and where they came from.
