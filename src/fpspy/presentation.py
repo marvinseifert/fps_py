@@ -614,9 +614,9 @@ class Presenter:
         return False
 
     def clear_screen(self):
-        """Clear the screen to black."""
+        """Clear the screen to white."""
         self.window.use()
-        self.window.ctx.clear(0, 0, 0)
+        self.window.ctx.clear(1.0, 1.0, 1.0)
         self.window.swap_buffers()
 
     def show_frame(self, frame):
@@ -632,8 +632,8 @@ class Presenter:
         assert self.play_state is not None, "No stimulus loaded."
         state = self.play_state
         self.window.use()
-        # Clear window (to black is fine), render the stimulus and swap buffers.
-        self.window.ctx.clear(0, 0, 0)
+        # Clear window to white, render the stimulus and swap buffers.
+        self.window.ctx.clear(1.0, 1.0, 1.0)
         state.prog.render(self.window.ctx, state.frame_idxs[frame], frame)
         self.window.swap_buffers()
         if state.triggers[frame]:
@@ -756,8 +756,8 @@ class Presenter:
                 if pattern_index % change_logic == 0 and pattern_index < len(colours):
                     self.notify_colour(colours[pattern_index])
 
-            # Clear window (to black is fine), render the stimulus and swap buffers.
-            self.window.ctx.clear(0, 0, 0)
+            # Clear window to white, render the stimulus and swap buffers.
+            self.window.ctx.clear(1.0, 1.0, 1.0)
             prog.render(self.window.ctx, frame_idxs[i], i)
             timings[i, 2] = time.perf_counter()
             self.window.swap_buffers()

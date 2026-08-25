@@ -748,9 +748,9 @@ class Presenter:
         return False
 
     def clear_screen(self):
-        """Clear the screen to black."""
+        """Clear the screen to white."""
         self.window.use()
-        self.window.ctx.clear(0, 0, 0)
+        self.window.ctx.clear(1.0, 1.0, 1.0)
         self.window.swap_buffers()
 
     def _render_to_screen(self, prog, frame_idx, global_frame_num):
@@ -760,15 +760,15 @@ class Presenter:
         if use_adapter and has_adapter:
             # Render stimulus into the offscreen FBO.
             self.display_adapter.fbo.use()
-            self.window.ctx.clear(0, 0, 0)
+            self.window.ctx.clear(1.0, 1.0, 1.0)
             prog.render(self.window.ctx, frame_idx, global_frame_num)
             # Switch back to the default framebuffer and draw adapted result.
             self.window.use()
-            self.window.ctx.clear(0, 0, 0)
+            self.window.ctx.clear(1.0, 1.0, 1.0)
             self.display_adapter.render(self.window.ctx)
         else:
             # No adaptation — render directly to screen.
-            self.window.ctx.clear(0, 0, 0)
+            self.window.ctx.clear(1.0, 1.0, 1.0)
             prog.render(self.window.ctx, frame_idx, global_frame_num)
 
     def show_frame(self, frame):
