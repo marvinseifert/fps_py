@@ -19,6 +19,8 @@ from typing import Callable, Optional, Union
 import numpy as np
 
 import fpspy.create_noise
+import fpspy.random_bars
+import fpspy.random_dots
 import fpspy.shuffle_noise
 import fpspy.stim
 
@@ -309,5 +311,349 @@ MOVING_BAR = register(
             ),
         ),
         generate=_generate_moving_bar,
+    )
+)
+
+
+# --- Random bars ------------------------------------------------------------
+
+
+def _generate_random_bars(
+    stim_dir: Path,
+    file_name: str,
+    n_bars: int,
+    width: int,
+    height: int,
+    length_min: float,
+    length_max: float,
+    thickness_min: float,
+    thickness_max: float,
+    n_orientations: int,
+    on_frames: int,
+    off_frames: int,
+    fps: float,
+    seed: int,
+) -> Path:
+    path = stim_dir / _h5_name(file_name)
+    if on_frames < 1:
+        raise ValueError(f"A bar must be shown for at least one frame. {on_frames=}")
+    # seed=0 means "pick one", but the picked seed is still recorded in the
+    # metadata, so any generated file can be regenerated exactly.
+    if seed == 0:
+        seed = int(np.random.SeedSequence().entropy % (2**63))
+    rng = np.random.default_rng(seed)
+
+    bars = fpspy.random_bars.sample_bars(
+        rng,
+        n_bars=n_bars,
+        width=width,
+        height=height,
+        length_min=length_min,
+        length_max=length_max,
+        thickness_min=thickness_min,
+        thickness_max=thickness_max,
+        n_orientations=n_orientations,
+    )
+    with_blank = off_frames > 0
+    frames = fpspy.random_bars.bar_frames(
+        bars, width=width, height=height, with_blank=with_blank
+    )
+
+    # Two stored frames per bar (the bar, then the blank), each held for its
+    # own duration, instead of one stored frame per displayed frame. Durations
+    # are given in display frames so that they land on refresh boundaries.
+    per_bar = 2 if with_blank else 1
+    pattern = [on_frames / fps] + ([off_frames / fps] if with_blank else [])
+    frame_durations = np.tile(np.asarray(pattern, dtype=np.float64), n_bars)
+
+    stim_array = fpspy.stim.StimArray(
+        frames,
+        frame_durations=frame_durations,
+        zoom=1,
+        # None triggers on every stored frame, i.e. on each bar onset and each
+        # blank onset, starting with a bar.
+        triggers=None,
+        label=(
+            f"Random bars, {n_bars} bars, {length_min:g}-{length_max:g}px long, "
+            f"{thickness_min:g}-{thickness_max:g}px thick"
+        ),
+        metadata={
+            "n_bars": n_bars,
+            "length_min": length_min,
+            "length_max": length_max,
+            "thickness_min": thickness_min,
+            "thickness_max": thickness_max,
+            "n_orientations": n_orientations,
+            "on_frames": on_frames,
+            "off_frames": off_frames,
+            "fps": fps,
+            "seed": seed,
+            "background": 255,
+            "bar_value": 0,
+        },
+    )
+    stim_array.write_hdf5(path)
+    fpspy.random_bars.append_shape_table(path, bars, per_bar, group="bars")
+    return path
+
+
+RANDOM_BARS = register(
+    Generator(
+        key="random_bars",
+        name="Random bars (flashed, one at a time)",
+        params=(
+            Param(
+                "n_bars",
+                "Number of bars",
+                "int",
+                100,
+                minimum=1,
+                maximum=100000,
+                tooltip="Each bar costs one stored width x height frame (plus "
+                "one shared-size blank), so the array is built in memory at "
+                "about 1 MB per bar for a 1280x800 field.",
+            ),
+            Param("width", "Width (px)", "int", 1280, minimum=1, maximum=10000),
+            Param("height", "Height (px)", "int", 800, minimum=1, maximum=10000),
+            Param(
+                "length_min",
+                "Bar length min (px)",
+                "float",
+                100.0,
+                minimum=1.0,
+                maximum=10000.0,
+            ),
+            Param(
+                "length_max",
+                "Bar length max (px)",
+                "float",
+                800.0,
+                minimum=1.0,
+                maximum=10000.0,
+            ),
+            Param(
+                "thickness_min",
+                "Bar thickness min (px)",
+                "float",
+                20.0,
+                minimum=1.0,
+                maximum=10000.0,
+            ),
+            Param(
+                "thickness_max",
+                "Bar thickness max (px)",
+                "float",
+                200.0,
+                minimum=1.0,
+                maximum=10000.0,
+            ),
+            Param(
+                "n_orientations",
+                "Orientations (0 = continuous)",
+                "int",
+                0,
+                minimum=0,
+                maximum=360,
+                tooltip="0 draws each orientation uniformly from [0, 180). Any "
+                "other value picks among that many equally spaced "
+                "orientations, e.g. 4 gives 0, 45, 90 and 135 degrees.",
+            ),
+            Param(
+                "on_frames",
+                "Bar duration (display frames)",
+                "int",
+                30,
+                minimum=1,
+                maximum=100000,
+            ),
+            Param(
+                "off_frames",
+                "Blank duration (display frames)",
+                "int",
+                30,
+                minimum=0,
+                maximum=100000,
+                tooltip="0 leaves no blank between bars: the next bar appears "
+                "as the previous one disappears.",
+            ),
+            Param(
+                "fps",
+                "Display frame rate (Hz)",
+                "float",
+                60.0,
+                minimum=1.0,
+                maximum=240.0,
+                tooltip="Only used to turn the two durations above into "
+                "seconds. Set it to the rate the stimulus will be played at "
+                "so the durations land on refresh boundaries.",
+            ),
+            Param(
+                "seed",
+                "Random seed (0 = new each time)",
+                "int",
+                0,
+                minimum=0,
+                maximum=2**31 - 1,
+                tooltip="The seed actually used is always written to the "
+                "file's metadata, so any generated file can be reproduced.",
+            ),
+        ),
+        generate=_generate_random_bars,
+    )
+)
+
+
+# --- Random dots ------------------------------------------------------------
+# Same stimulus as the random bars, with a filled circle in place of the
+# rotated rectangle: random centre, random diameter, one at a time, each
+# followed by a blank. A dot has no orientation, so diameter is the only shape
+# parameter.
+
+
+def _generate_random_dots(
+    stim_dir: Path,
+    file_name: str,
+    n_dots: int,
+    width: int,
+    height: int,
+    diameter_min: float,
+    diameter_max: float,
+    on_frames: int,
+    off_frames: int,
+    fps: float,
+    seed: int,
+) -> Path:
+    path = stim_dir / _h5_name(file_name)
+    if on_frames < 1:
+        raise ValueError(f"A dot must be shown for at least one frame. {on_frames=}")
+    # seed=0 means "pick one", but the picked seed is still recorded in the
+    # metadata, so any generated file can be regenerated exactly.
+    if seed == 0:
+        seed = int(np.random.SeedSequence().entropy % (2**63))
+    rng = np.random.default_rng(seed)
+
+    dots = fpspy.random_dots.sample_dots(
+        rng,
+        n_dots=n_dots,
+        width=width,
+        height=height,
+        diameter_min=diameter_min,
+        diameter_max=diameter_max,
+    )
+    with_blank = off_frames > 0
+    frames = fpspy.random_dots.dot_frames(
+        dots, width=width, height=height, with_blank=with_blank
+    )
+
+    # Two stored frames per dot (the dot, then the blank), each held for its
+    # own duration, instead of one stored frame per displayed frame. Durations
+    # are given in display frames so that they land on refresh boundaries.
+    per_dot = 2 if with_blank else 1
+    pattern = [on_frames / fps] + ([off_frames / fps] if with_blank else [])
+    frame_durations = np.tile(np.asarray(pattern, dtype=np.float64), n_dots)
+
+    stim_array = fpspy.stim.StimArray(
+        frames,
+        frame_durations=frame_durations,
+        zoom=1,
+        # None triggers on every stored frame, i.e. on each dot onset and each
+        # blank onset, starting with a dot.
+        triggers=None,
+        label=(
+            f"Random dots, {n_dots} dots, "
+            f"{diameter_min:g}-{diameter_max:g}px across"
+        ),
+        metadata={
+            "n_dots": n_dots,
+            "diameter_min": diameter_min,
+            "diameter_max": diameter_max,
+            "on_frames": on_frames,
+            "off_frames": off_frames,
+            "fps": fps,
+            "seed": seed,
+            "background": 255,
+            "dot_value": 0,
+        },
+    )
+    stim_array.write_hdf5(path)
+    fpspy.random_bars.append_shape_table(path, dots, per_dot, group="dots")
+    return path
+
+
+RANDOM_DOTS = register(
+    Generator(
+        key="random_dots",
+        name="Random dots (flashed, one at a time)",
+        params=(
+            Param(
+                "n_dots",
+                "Number of dots",
+                "int",
+                100,
+                minimum=1,
+                maximum=100000,
+                tooltip="Each dot costs one stored width x height frame (plus "
+                "one shared-size blank), so the array is built in memory at "
+                "about 1 MB per dot for a 1280x800 field.",
+            ),
+            Param("width", "Width (px)", "int", 1280, minimum=1, maximum=10000),
+            Param("height", "Height (px)", "int", 800, minimum=1, maximum=10000),
+            Param(
+                "diameter_min",
+                "Dot diameter min (px)",
+                "float",
+                20.0,
+                minimum=1.0,
+                maximum=10000.0,
+            ),
+            Param(
+                "diameter_max",
+                "Dot diameter max (px)",
+                "float",
+                400.0,
+                minimum=1.0,
+                maximum=10000.0,
+            ),
+            Param(
+                "on_frames",
+                "Dot duration (display frames)",
+                "int",
+                30,
+                minimum=1,
+                maximum=100000,
+            ),
+            Param(
+                "off_frames",
+                "Blank duration (display frames)",
+                "int",
+                30,
+                minimum=0,
+                maximum=100000,
+                tooltip="0 leaves no blank between dots: the next dot appears "
+                "as the previous one disappears.",
+            ),
+            Param(
+                "fps",
+                "Display frame rate (Hz)",
+                "float",
+                60.0,
+                minimum=1.0,
+                maximum=240.0,
+                tooltip="Only used to turn the two durations above into "
+                "seconds. Set it to the rate the stimulus will be played at "
+                "so the durations land on refresh boundaries.",
+            ),
+            Param(
+                "seed",
+                "Random seed (0 = new each time)",
+                "int",
+                0,
+                minimum=0,
+                maximum=2**31 - 1,
+                tooltip="The seed actually used is always written to the "
+                "file's metadata, so any generated file can be reproduced.",
+            ),
+        ),
+        generate=_generate_random_dots,
     )
 )
