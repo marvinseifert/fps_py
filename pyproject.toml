@@ -23,6 +23,7 @@ paramiko = "^3.5.1"
 scpclient = "^0.7"
 debugpy = "^1.8.16"
 pydevd-pycharm = ">=252.23892.515,<252.23893.0"
+imageio-ffmpeg = "^0.6.0"
 
 
 [build-system]
