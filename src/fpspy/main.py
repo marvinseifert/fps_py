@@ -58,7 +58,7 @@ def gui(
     n_windows = len(config["windows"])
 
     # Delay between loading the stimulus and the start of the presentation, in seconds.
-    presentation_delay = 10
+    presentation_delay = fpspy.config.get_presentation_delay(config)
 
     # Start the GUI and the stimulus presentation in separate processes.
     # Create separate command queue for each window process to avoid race conditions
@@ -201,7 +201,7 @@ def cli(
     s_frames = schedule_frames(info["n_frames"], info["fps"])
 
     # Delay between loading the stimulus and the start of the presentation, in seconds.
-    presentation_delay = 10
+    presentation_delay = fpspy.config.get_presentation_delay(config)
 
     # Create queues for inter-process communication
     # Create separate command queue for each window process to avoid race conditions

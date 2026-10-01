@@ -577,9 +577,9 @@ class Presenter:
         # Add buffer delay to frames:
         delay_needed = s_frames[0] - time.perf_counter()
         if delay_needed > 0:
-            delay = 10
+            delay = self.delay
         else:
-            delay = np.abs(delay_needed) + 10
+            delay = np.abs(delay_needed) + self.delay
         s_frames = s_frames + delay
 
         print(
