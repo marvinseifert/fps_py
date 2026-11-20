@@ -92,12 +92,17 @@ class Item:
         self,
         stim_path: PathLike,
         stim_config_path: Optional[PathLike] = None,
+        stim_config: Optional[str] = None,
         loops: int = 1,
         lazy_textures: bool = False,
         label: Optional[str] = None,
     ):
+        is_double_config = (stim_config_path is not None) and (stim_config is not None)
+        if is_double_config:
+            raise ValueError("stim_config and stim_config_path cannot both be set.")
         self.stim_path = stim_path
         self.stim_config_path = stim_config_path
+        self._stim_config = stim_config
         self.loops = loops
         self.lazy_textures = lazy_textures
         if label is None:
@@ -110,6 +115,8 @@ class Item:
             return json.dumps({"lazy_textures": self.lazy_textures})
         if self.stim_config_path is not None:
             return Path(self.stim_config_path).read_text(encoding="utf-8")
+        elif self._stim_config is not None:
+            return self._stim_config
         return None
 
 
