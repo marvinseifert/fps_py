@@ -1047,7 +1047,7 @@ def _read_hdf5_v1(f):
     metadata = dict(f["metadata"])
     if frames.dtype == np.uint8:
         _logger.info(
-            f"frames dtype is uint8 (interpreted as display encoded integers)"
+            f"frames dtype is uint8 (interpreted as display encoded integers) [{label}]"
         )
     elif frames.dtype in (np.float16, np.float32):
         _logger.info(f"frames dtype is float (interpreted as linear values in [0, 1])")
@@ -1635,11 +1635,16 @@ class MoviePlayer(StimProgram):
         zoom: float = 1.0,
         is_display_encoded: bool = True,
         label: Optional[str] = None,
+        allow_vfr: bool = False,
     ) -> None:
         self.movie_path = Path(movie_path)
         self.zoom = zoom
         self._is_display_encoded = is_display_encoded
         self.label = label if label is not None else self.movie_path.stem
+        # When True, a non-constant-frame-rate file is played at its nominal
+        # (guessed) rate instead of being rejected. The caller is responsible
+        # for deciding the mismatch is small enough to tolerate.
+        self._allow_vfr = allow_vfr
 
         self.win_id = None
         self._container = None
@@ -1688,10 +1693,18 @@ class MoviePlayer(StimProgram):
         avg_rate = self._stream.average_rate
         guessed_rate = self._stream.guessed_rate
         if avg_rate is None or avg_rate != guessed_rate:
-            raise ValueError(
-                f"Movie {self.movie_path} appears to be variable-frame-rate "
-                f"({avg_rate=}, {guessed_rate=}). Re-encode with constant "
-                f"frame rate (e.g. `ffmpeg -r 30 -vsync cfr`)."
+            if avg_rate is None or not self._allow_vfr:
+                raise ValueError(
+                    f"Movie {self.movie_path} appears to be variable-frame-rate "
+                    f"({avg_rate=}, {guessed_rate=}). Re-encode with constant "
+                    f"frame rate (e.g. `ffmpeg -r 30 -vsync cfr`)."
+                )
+            # Tolerated by the caller. The container's nominal (guessed) rate is
+            # often unreliable (e.g. tagged 59.94 for a 30 fps clip), so keep
+            # average_rate (frames / duration), which is the true playback rate.
+            _logger.debug(
+                f"Movie {self.movie_path} nominal rate {guessed_rate} != average "
+                f"{avg_rate}; playing at the average rate."
             )
         n_frames = self._stream.frames
         if n_frames <= 0:
