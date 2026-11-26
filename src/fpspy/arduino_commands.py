@@ -39,6 +39,8 @@ COMMANDS: list[tuple[str, str]] = [
     ("chirp_365", "Play a frequency chirp on LED 365 (UV)."),
     ("chirp", "Play a frequency chirp on all active LEDs."),
     ("noise", "Play color noise at 30Hz on configured noise channels."),
+    ("ternary_noise", "Play 3-level (off/grey/on) pink noise at 30Hz, one unique 15 min sequence."),
+    ("bw_ternary_noise", "Like ternary_noise, but all active LEDs follow one sequence (black and white)."),
     ("scf", "Play single chromatic full-field flashes for all LEDs sequentially."),
     ("wscf", "Play single chromatic full-field flashes for all LEDs sequentially with white."),
     ("scf_non_uv", "Play single chromatic full-field flashes for all LEDs except UV."),
@@ -68,6 +70,8 @@ COMMANDS: list[tuple[str, str]] = [
     ("led_365", "Switch on LED 365."),
     ("led_365_a_416", "Switch on LED 365 and LED 413 together."),
     ("led_460_a_560", "Switch on LED 460 and LED 560 together."),
+    ("greens_on", "Switch on LED 560 and LED 535 together."),
+    ("reds_on", "Switch on LED 660 and LED 610 together."),
     ("white", "Switch on all active LEDs."),
     ("O", "Switch off all LEDs."),
     ("T", "Send a fast trigger signal without console delay."),
@@ -88,7 +92,7 @@ DESCRIPTIONS: dict[str, str] = dict(COMMANDS)
 # anything that plays a protocol of its own would run against the stimulus.
 COLOUR_COMMANDS: list[str] = [
     cmd for cmd, _ in COMMANDS if cmd.startswith("led_")
-] + ["white", "O"]
+] + ["greens_on", "reds_on", "white", "O"]
 
 
 def is_known(command: str) -> bool:
